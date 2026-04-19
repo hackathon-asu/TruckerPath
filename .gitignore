@@ -12,3 +12,4 @@ Api-credentials.json
 tsconfig.tsbuildinfo
 Screenshot*.png
 extra/
+.vercel

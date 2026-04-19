@@ -1,13 +1,14 @@
 "use client";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Bell, Grid3X3, Search, Truck } from "lucide-react";
+import { Bell, Grid3X3, Search, Sparkles, Truck } from "lucide-react";
 import { cn } from "@/lib/cn";
 
 export function TopHeader({ onOpenCmd }: { onOpenCmd?: () => void }) {
   const pathname = usePathname();
   const tabs = [
     { href: "/", label: "Map" },
+    { href: "/copilot", label: "CoPilot", icon: Sparkles },
     { href: "/reports", label: "Reports" },
   ];
   return (
@@ -29,17 +30,19 @@ export function TopHeader({ onOpenCmd }: { onOpenCmd?: () => void }) {
           {tabs.map((t) => {
             const active =
               t.href === "/" ? pathname === "/" : pathname.startsWith(t.href);
+            const Icon = (t as { icon?: React.ComponentType<{ className?: string }> }).icon;
             return (
               <Link
                 key={t.href}
                 href={t.href}
                 className={cn(
-                  "relative px-3 py-4 text-sm font-medium transition-colors",
+                  "relative flex items-center gap-1 px-3 py-4 text-sm font-medium transition-colors",
                   active
                     ? "text-brand-500 after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:rounded-full after:bg-brand-500"
                     : "text-ink-700 hover:text-ink-900",
                 )}
               >
+                {Icon && <Icon className="h-3.5 w-3.5" />}
                 {t.label}
               </Link>
             );

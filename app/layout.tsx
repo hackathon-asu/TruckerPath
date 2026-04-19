@@ -5,8 +5,8 @@ import "./globals.css";
 const inter = Inter({ subsets: ["latin"], display: "swap", variable: "--font-inter" });
 
 export const metadata: Metadata = {
-  title: "NavPro Fleets",
-  description: "Modern trucking fleet operations — clone built on the NavPro API.",
+  title: "Dispatcher CoPilot · TruckerPath",
+  description: "AI-native fleet operations assistant — smart dispatch, parking risk, detention impact, and proactive alerts.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
