@@ -1,4 +1,5 @@
 import type { Driver, RoutingProfile, Terminal, Vehicle } from "./types";
+import type { RouteAlt } from "./route";
 
 async function jsonFetch<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, {
@@ -41,10 +42,10 @@ export const api = {
       `/api/geocode?q=${encodeURIComponent(q)}`,
     ),
   calcRoute: (stops: { latitude: number; longitude: number }[]) =>
-    jsonFetch<{ miles: number; minutes: number; polyline: [number, number][]; fallback?: boolean }>(
-      "/api/route-calc",
-      { method: "POST", body: JSON.stringify({ stops }) },
-    ),
+    jsonFetch<{ routes: RouteAlt[]; fallback?: boolean }>("/api/route-calc", {
+      method: "POST",
+      body: JSON.stringify({ stops }),
+    }),
   tripInsights: (body: unknown) =>
     jsonFetch<{ insights: string[]; fuelGal: number; fuelCost: number; tolls: number }>(
       "/api/trip-insights",
