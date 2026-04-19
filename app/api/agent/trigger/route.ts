@@ -11,13 +11,17 @@ export async function POST(req: Request) {
   try {
     assertInsforgeConfigured();
     assertGeminiConfigured();
+    const client = insforge;
+    if (!client) {
+      throw new Error("Missing NEXT_PUBLIC_INSFORGE_URL or NEXT_PUBLIC_INSFORGE_ANON_KEY");
+    }
 
     const { event } = await req.json();
     if (!event?.loadId) {
       return NextResponse.json({ error: "event.loadId is required" }, { status: 400 });
     }
 
-    const { data: loadRow, error: loadError } = await insforge.database
+    const { data: loadRow, error: loadError } = await client.database
       .from("loads")
       .select("*")
       .eq("id", event.loadId)
@@ -33,7 +37,7 @@ export async function POST(req: Request) {
 
     let assignedDriver = null;
     if (load.assignedDriverId !== undefined) {
-      const { data: driverRow } = await insforge.database
+      const { data: driverRow } = await client.database
         .from("dispatch_drivers")
         .select("*")
         .eq("driver_id", load.assignedDriverId)
@@ -41,7 +45,7 @@ export async function POST(req: Request) {
       assignedDriver = driverRow ? mapDriverRow(driverRow as Record<string, unknown>) : null;
     }
 
-    const { data: parkingRows } = await insforge.database
+    const { data: parkingRows } = await client.database
       .from("parking_stops")
       .select("*")
       .order("miles_from_origin", { ascending: true });
@@ -81,7 +85,7 @@ Parking stops: ${JSON.stringify(parkingStops.slice(0, 6), null, 2)}`,
     };
 
     // Insert alert into database so realtime feed picks it up
-    const { error } = await insforge.database.from("copilot_alerts").insert([alert]);
+    const { error } = await client.database.from("copilot_alerts").insert([alert]);
     
     if (error) {
       console.error("Failed to insert AI alert:", error);

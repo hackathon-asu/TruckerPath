@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "@/lib/client";
 import { mapAlertRow, mapLoadRow } from "@/lib/copilot-data";
-import { insforge } from "@/lib/insforge";
+import { hasInsforgeConfig, insforge } from "@/lib/insforge";
+import { mockAlerts, mockDispatchDrivers, mockLoads } from "@/lib/mock";
 import type {
   CopilotAlert,
   CostBreakdown,
@@ -20,22 +21,54 @@ import { AlertFeed } from "@/components/copilot/alert-feed";
 import { DispatchPanel } from "@/components/copilot/dispatch-panel";
 import { useToast } from "@/components/toast";
 
-async function loadInsforgeSnapshot() {
-  const [{ data: loadsData, error: loadsError }, driversResult, alertsResult] = await Promise.all([
-    insforge.database.from("loads").select("*").order("id", { ascending: true }),
-    insforge.database.from("dispatch_drivers").select("*", { count: "exact", head: true }),
-    insforge.database.from("copilot_alerts").select("*").order("timestamp", { ascending: false }),
-  ]);
+type CopilotSnapshot = {
+  loads: Load[];
+  driversCount: number;
+  alerts: CopilotAlert[];
+  live: boolean;
+  notice: string | null;
+};
 
-  if (loadsError) throw new Error(loadsError.message);
-  if (driversResult.error) throw new Error(driversResult.error.message);
-  if (alertsResult.error) throw new Error(alertsResult.error.message);
-
+function getDemoSnapshot(notice: string): CopilotSnapshot {
   return {
-    loads: (loadsData ?? []).map((row) => mapLoadRow(row as Record<string, unknown>)),
-    driversCount: driversResult.count ?? 0,
-    alerts: (alertsResult.data ?? []).map((row) => mapAlertRow(row as Record<string, unknown>)),
+    loads: mockLoads,
+    driversCount: mockDispatchDrivers.filter((driver) => driver.status === "AVAILABLE").length,
+    alerts: mockAlerts,
+    live: false,
+    notice,
   };
+}
+
+async function loadCopilotSnapshot(): Promise<CopilotSnapshot> {
+  if (!hasInsforgeConfig || !insforge) {
+    return getDemoSnapshot(
+      "Using demo copilot data. Add NEXT_PUBLIC_INSFORGE_URL and NEXT_PUBLIC_INSFORGE_ANON_KEY in .env.local to enable live InsForge data.",
+    );
+  }
+
+  try {
+    const client = insforge;
+    const [{ data: loadsData, error: loadsError }, driversResult, alertsResult] = await Promise.all([
+      client.database.from("loads").select("*").order("id", { ascending: true }),
+      client.database.from("dispatch_drivers").select("*", { count: "exact", head: true }),
+      client.database.from("copilot_alerts").select("*").order("timestamp", { ascending: false }),
+    ]);
+
+    if (loadsError) throw new Error(loadsError.message);
+    if (driversResult.error) throw new Error(driversResult.error.message);
+    if (alertsResult.error) throw new Error(alertsResult.error.message);
+
+    return {
+      loads: (loadsData ?? []).map((row) => mapLoadRow(row as Record<string, unknown>)),
+      driversCount: driversResult.count ?? 0,
+      alerts: (alertsResult.data ?? []).map((row) => mapAlertRow(row as Record<string, unknown>)),
+      live: true,
+      notice: null,
+    };
+  } catch (error) {
+    console.error("Failed to load live copilot snapshot, falling back to demo data:", error);
+    return getDemoSnapshot("Live InsForge data is unavailable right now. Showing demo copilot data instead.");
+  }
 }
 
 export default function CopilotPage() {
@@ -47,32 +80,40 @@ export default function CopilotPage() {
   const [detention, setDetention] = useState<DetentionImpactResult | null>(null);
   const [alerts, setAlerts] = useState<CopilotAlert[]>([]);
   const [bootError, setBootError] = useState<string | null>(null);
+  const [statusNotice, setStatusNotice] = useState<string | null>(null);
+  const [isDemoMode, setIsDemoMode] = useState(!hasInsforgeConfig);
   const [loadingSnapshot, setLoadingSnapshot] = useState(true);
   const [analysisLoading, setAnalysisLoading] = useState(false);
   const { show, Toast } = useToast();
 
-  const refreshSnapshot = useCallback(async (preserveSelection = true) => {
-    setLoadingSnapshot(true);
-    try {
-      const snapshot = await loadInsforgeSnapshot();
-      setLoads(snapshot.loads);
-      setDriversCount(snapshot.driversCount);
-      setAlerts(snapshot.alerts);
-      setBootError(null);
+  const refreshSnapshot = useCallback(
+    async (preserveSelection = true) => {
+      setLoadingSnapshot(true);
+      try {
+        const snapshot = await loadCopilotSnapshot();
+        setLoads(snapshot.loads);
+        setDriversCount(snapshot.driversCount);
+        setAlerts(snapshot.alerts);
+        setStatusNotice(snapshot.notice);
+        setIsDemoMode(!snapshot.live);
+        setBootError(null);
 
-      if (!preserveSelection || !snapshot.loads.some((load) => load.id === selectedLoadId)) {
-        setSelectedLoadId(snapshot.loads[0]?.id ?? null);
+        if (!preserveSelection || !snapshot.loads.some((load) => load.id === selectedLoadId)) {
+          setSelectedLoadId(snapshot.loads[0]?.id ?? null);
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Unable to load copilot data";
+        setBootError(message);
+        setStatusNotice(null);
+        setLoads([]);
+        setAlerts([]);
+        setDriversCount(0);
+      } finally {
+        setLoadingSnapshot(false);
       }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Unable to load InsForge data";
-      setBootError(message);
-      setLoads([]);
-      setAlerts([]);
-      setDriversCount(0);
-    } finally {
-      setLoadingSnapshot(false);
-    }
-  }, [selectedLoadId]);
+    },
+    [selectedLoadId],
+  );
 
   useEffect(() => {
     void refreshSnapshot(false);
@@ -183,7 +224,7 @@ export default function CopilotPage() {
         try {
           const result = await api.detentionImpact({ loadId: alert.loadId });
           setDetention(result);
-          show(`Loaded live detention impact for ${alert.loadId}`);
+          show(`Loaded detention impact for ${alert.loadId}`);
         } catch (error) {
           const message = error instanceof Error ? error.message : "Unable to load detention impact";
           show(message);
@@ -197,7 +238,7 @@ export default function CopilotPage() {
             hosRemaining: dispatch?.bestDriver?.driver.hosDriveRemaining,
           });
           setParking(result);
-          show(`Loaded live parking plan for ${alert.loadId}`);
+          show(`Loaded parking plan for ${alert.loadId}`);
         } catch (error) {
           const message = error instanceof Error ? error.message : "Unable to load parking plan";
           show(message);
@@ -221,15 +262,25 @@ export default function CopilotPage() {
                     Live CoPilot
                   </div>
                   <div className="mt-1 text-sm text-ink-700">
-                    Live InsForge loads and alerts with Gemini-backed dispatch scoring.
+                    {isDemoMode
+                      ? "Demo loads and alerts with local dispatch scoring."
+                      : "Live InsForge loads and alerts with dispatch scoring."}
                   </div>
                 </div>
                 <div className="flex items-center gap-2 text-xs">
-                  <span className="rounded-full bg-emerald-100 px-2.5 py-1 font-semibold text-emerald-700">
-                    InsForge
+                  <span
+                    className={`rounded-full px-2.5 py-1 font-semibold ${
+                      isDemoMode
+                        ? "bg-amber-100 text-amber-700"
+                        : "bg-emerald-100 text-emerald-700"
+                    }`}
+                  >
+                    {isDemoMode ? "Demo Data" : "InsForge"}
                   </span>
-                  <span className="rounded-full bg-sky-100 px-2.5 py-1 font-semibold text-sky-700">
-                    Gemini
+                  <span
+                    className="rounded-full bg-slate-100 px-2.5 py-1 font-semibold text-slate-700"
+                  >
+                    Dispatch Scoring
                   </span>
                   {analysisLoading && (
                     <span className="rounded-full bg-amber-100 px-2.5 py-1 font-semibold text-amber-700">
@@ -238,6 +289,11 @@ export default function CopilotPage() {
                   )}
                 </div>
               </div>
+              {statusNotice && (
+                <div className="mt-3 rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-700">
+                  {statusNotice}
+                </div>
+              )}
               {bootError && (
                 <div className="mt-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
                   {bootError}
