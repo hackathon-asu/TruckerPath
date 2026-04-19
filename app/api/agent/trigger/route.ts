@@ -3,24 +3,63 @@ import { insforge } from "@/lib/insforge";
 import { google } from "@ai-sdk/google";
 import { generateObject } from "ai";
 import { z } from "zod";
+import { mapDriverRow, mapLoadRow, mapParkingStopRow } from "@/lib/copilot-data";
+import { GEMINI_MODEL, assertGeminiConfigured } from "@/lib/gemini";
+import { assertInsforgeConfigured } from "@/lib/insforge";
 
 export async function POST(req: Request) {
   try {
+    assertInsforgeConfigured();
+    assertGeminiConfigured();
+
     const { event } = await req.json();
+    if (!event?.loadId) {
+      return NextResponse.json({ error: "event.loadId is required" }, { status: 400 });
+    }
 
-    // In a real agent workflow, we would query the database here to get the full context
-    // of the load, driver, and surrounding parking stops. For this prototype event response, 
-    // we'll pass the immediate event and mock a few contextual details for the AI to process.
+    const { data: loadRow, error: loadError } = await insforge.database
+      .from("loads")
+      .select("*")
+      .eq("id", event.loadId)
+      .single();
+    if (loadError) {
+      return NextResponse.json({ error: loadError.message }, { status: 500 });
+    }
+    if (!loadRow) {
+      return NextResponse.json({ error: `Load '${event.loadId}' not found in InsForge` }, { status: 404 });
+    }
 
-    const { data: loadInfo } = await insforge.database.from("loads").select("*").eq("id", event.loadId).single();
-    
-    // Pass event to Vercel AI SDK
+    const load = mapLoadRow(loadRow as Record<string, unknown>);
+
+    let assignedDriver = null;
+    if (load.assignedDriverId !== undefined) {
+      const { data: driverRow } = await insforge.database
+        .from("dispatch_drivers")
+        .select("*")
+        .eq("driver_id", load.assignedDriverId)
+        .single();
+      assignedDriver = driverRow ? mapDriverRow(driverRow as Record<string, unknown>) : null;
+    }
+
+    const { data: parkingRows } = await insforge.database
+      .from("parking_stops")
+      .select("*")
+      .order("miles_from_origin", { ascending: true });
+
+    const parkingStops = (parkingRows ?? []).map((row) => mapParkingStopRow(row as Record<string, unknown>));
+
     const result = await generateObject({
-      model: google("gemini-1.5-flash"),
-      system: `You are an autonomous AI Dispatcher Agent monitoring fleet events. 
-A new event just occurred in the simulation. Analyze the event and determine what cascadaing effects it has on Hours of Service, ETA, and Parking. 
+      model: google(GEMINI_MODEL),
+      system: `You are an autonomous AI dispatcher monitoring live fleet events from InsForge.
+Analyze the event and determine what cascading effects it has on Hours of Service, ETA, parking, or profitability.
 Draft exactly ONE distinct CopilotAlert to notify the human dispatcher.`,
-      prompt: `Event details: ${JSON.stringify(event, null, 2)}\nLoad Info: ${JSON.stringify(loadInfo, null, 2)}`,
+      prompt: `Event details: ${JSON.stringify(event, null, 2)}
+
+Load info: ${JSON.stringify(load, null, 2)}
+
+Assigned driver: ${JSON.stringify(assignedDriver, null, 2)}
+
+Parking stops: ${JSON.stringify(parkingStops.slice(0, 6), null, 2)}`,
       schema: z.object({
         alert: z.object({
           type: z.enum(["detention_delay", "parking_risk", "late_delivery_risk", "hos_violation_risk", "detention_cost", "better_driver"]),
@@ -36,6 +75,7 @@ Draft exactly ONE distinct CopilotAlert to notify the human dispatcher.`,
       id: `ai-alert-${Date.now()}`,
       ...result.object.alert,
       load_id: event.loadId,
+      driver_id: assignedDriver?.driverId ?? null,
       timestamp: new Date().toISOString(),
       dismissed: false
     };

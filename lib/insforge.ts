@@ -14,3 +14,9 @@ export const insforge = createClient({
   baseUrl: API_URL,
   anonKey: ANON_KEY
 });
+
+export function assertInsforgeConfigured() {
+  if (!API_URL || !ANON_KEY) {
+    throw new Error("Missing NEXT_PUBLIC_INSFORGE_URL or NEXT_PUBLIC_INSFORGE_ANON_KEY");
+  }
+}

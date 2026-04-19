@@ -64,7 +64,7 @@ export const api = {
       method: "POST",
       body: JSON.stringify(params),
     }),
-  detentionImpact: (params: { loadId: string; delayMinutes: number }) =>
+  detentionImpact: (params: { loadId: string; delayMinutes?: number }) =>
     jsonFetch<DetentionImpactResult>("/api/detention-impact", {
       method: "POST",
       body: JSON.stringify(params),

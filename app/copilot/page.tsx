@@ -1,6 +1,8 @@
 "use client";
+
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "@/lib/client";
+import { mapAlertRow, mapLoadRow } from "@/lib/copilot-data";
 import { insforge } from "@/lib/insforge";
 import type {
   CopilotAlert,
@@ -16,8 +18,25 @@ import { KpiCards } from "@/components/copilot/kpi-cards";
 import { LoadsTable } from "@/components/copilot/loads-table";
 import { AlertFeed } from "@/components/copilot/alert-feed";
 import { DispatchPanel } from "@/components/copilot/dispatch-panel";
-import { DemoScenario } from "@/components/copilot/demo-scenario";
 import { useToast } from "@/components/toast";
+
+async function loadInsforgeSnapshot() {
+  const [{ data: loadsData, error: loadsError }, driversResult, alertsResult] = await Promise.all([
+    insforge.database.from("loads").select("*").order("id", { ascending: true }),
+    insforge.database.from("dispatch_drivers").select("*", { count: "exact", head: true }),
+    insforge.database.from("copilot_alerts").select("*").order("timestamp", { ascending: false }),
+  ]);
+
+  if (loadsError) throw new Error(loadsError.message);
+  if (driversResult.error) throw new Error(driversResult.error.message);
+  if (alertsResult.error) throw new Error(alertsResult.error.message);
+
+  return {
+    loads: (loadsData ?? []).map((row) => mapLoadRow(row as Record<string, unknown>)),
+    driversCount: driversResult.count ?? 0,
+    alerts: (alertsResult.data ?? []).map((row) => mapAlertRow(row as Record<string, unknown>)),
+  };
+}
 
 export default function CopilotPage() {
   const [loads, setLoads] = useState<Load[]>([]);
@@ -27,105 +46,101 @@ export default function CopilotPage() {
   const [parking, setParking] = useState<ParkingRiskResult | null>(null);
   const [detention, setDetention] = useState<DetentionImpactResult | null>(null);
   const [alerts, setAlerts] = useState<CopilotAlert[]>([]);
-  const [demoStep, setDemoStep] = useState(0);
+  const [bootError, setBootError] = useState<string | null>(null);
+  const [loadingSnapshot, setLoadingSnapshot] = useState(true);
+  const [analysisLoading, setAnalysisLoading] = useState(false);
   const { show, Toast } = useToast();
 
+  const refreshSnapshot = useCallback(async (preserveSelection = true) => {
+    setLoadingSnapshot(true);
+    try {
+      const snapshot = await loadInsforgeSnapshot();
+      setLoads(snapshot.loads);
+      setDriversCount(snapshot.driversCount);
+      setAlerts(snapshot.alerts);
+      setBootError(null);
+
+      if (!preserveSelection || !snapshot.loads.some((load) => load.id === selectedLoadId)) {
+        setSelectedLoadId(snapshot.loads[0]?.id ?? null);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unable to load InsForge data";
+      setBootError(message);
+      setLoads([]);
+      setAlerts([]);
+      setDriversCount(0);
+    } finally {
+      setLoadingSnapshot(false);
+    }
+  }, [selectedLoadId]);
+
   useEffect(() => {
-    // Initial fetch of data
-    const fetchData = async () => {
+    void refreshSnapshot(false);
+
+    const interval = window.setInterval(() => {
+      void refreshSnapshot(true);
+    }, 5000);
+
+    return () => window.clearInterval(interval);
+  }, [refreshSnapshot]);
+
+  const analyzeLoad = useCallback(
+    async (loadId: string) => {
+      setAnalysisLoading(true);
       try {
-        const { data: loadsData } = await insforge.database.from("loads").select("*");
-        if (loadsData && loadsData.length > 0) {
-          setLoads(loadsData as any);
-        } else {
-          // Fall back to mock loads if DB not yet seeded
-          setLoads([
-            { id: "PHX-2847", commodity: "Electronics", weight: 42000, rate: 3850, miles: 1065, origin: { lat: 33.4484, lng: -112.074, name: "Phoenix, AZ" }, destination: { lat: 32.7767, lng: -96.797, name: "Dallas, TX" }, shipper: "West Valley Distribution", receiver: "DFW Logistics Hub", status: "pending", notes: "High-value freight — temperature monitoring required" },
-            { id: "TUC-1134", commodity: "Building Materials", weight: 44000, rate: 1420, miles: 450, origin: { lat: 32.2226, lng: -110.9747, name: "Tucson, AZ" }, destination: { lat: 35.0844, lng: -106.6504, name: "Albuquerque, NM" }, shipper: "Southwest Lumber Co.", receiver: "ABQ Construction Supply", status: "assigned" },
-            { id: "LV-0921", commodity: "Consumer Goods", weight: 38000, rate: 1650, miles: 270, origin: { lat: 36.1699, lng: -115.1398, name: "Las Vegas, NV" }, destination: { lat: 34.0522, lng: -118.2437, name: "Los Angeles, CA" }, shipper: "Vegas Wholesale", receiver: "LA Distribution Center", status: "pending" },
-            { id: "PHX-3310", commodity: "Produce (Refrigerated)", weight: 39000, rate: 2800, miles: 515, origin: { lat: 33.4484, lng: -112.074, name: "Phoenix, AZ" }, destination: { lat: 36.7783, lng: -119.4179, name: "Fresno, CA" }, shipper: "Arizona Fresh Farms", receiver: "Central Valley Cold Storage", status: "pending", notes: "Reefer required — 34°F" },
-          ] as any);
-        }
-      } catch {
-        // same mock fallback on connection error
-        setLoads([
-          { id: "PHX-2847", commodity: "Electronics", weight: 42000, rate: 3850, miles: 1065, origin: { lat: 33.4484, lng: -112.074, name: "Phoenix, AZ" }, destination: { lat: 32.7767, lng: -96.797, name: "Dallas, TX" }, shipper: "West Valley Distribution", receiver: "DFW Logistics Hub", status: "pending", notes: "High-value freight — temperature monitoring required" },
-          { id: "TUC-1134", commodity: "Building Materials", weight: 44000, rate: 1420, miles: 450, origin: { lat: 32.2226, lng: -110.9747, name: "Tucson, AZ" }, destination: { lat: 35.0844, lng: -106.6504, name: "Albuquerque, NM" }, shipper: "Southwest Lumber Co.", receiver: "ABQ Construction Supply", status: "assigned" },
-          { id: "LV-0921", commodity: "Consumer Goods", weight: 38000, rate: 1650, miles: 270, origin: { lat: 36.1699, lng: -115.1398, name: "Las Vegas, NV" }, destination: { lat: 34.0522, lng: -118.2437, name: "Los Angeles, CA" }, shipper: "Vegas Wholesale", receiver: "LA Distribution Center", status: "pending" },
-          { id: "PHX-3310", commodity: "Produce (Refrigerated)", weight: 39000, rate: 2800, miles: 515, origin: { lat: 33.4484, lng: -112.074, name: "Phoenix, AZ" }, destination: { lat: 36.7783, lng: -119.4179, name: "Fresno, CA" }, shipper: "Arizona Fresh Farms", receiver: "Central Valley Cold Storage", status: "pending", notes: "Reefer required — 34°F" },
-        ] as any);
-      }
+        const dispatchResult = await api.dispatchScore(loadId);
+        setDispatch(dispatchResult);
 
-      try {
-        const { count } = await insforge.database.from("dispatch_drivers").select("*", { count: "exact", head: true });
-        setDriversCount(count ?? 5);
-      } catch {
-        setDriversCount(5); // 5 mock drivers
-      }
+        const bestHosRemaining = dispatchResult.bestDriver?.driver.hosDriveRemaining;
+        const parkingResult = await api.parkingRisk({
+          loadId,
+          hosRemaining: bestHosRemaining,
+        });
+        setParking(parkingResult);
 
-      try {
-        const { data: alertsData } = await insforge.database.from("copilot_alerts").select("*").order("timestamp", { ascending: false });
-        if (alertsData && alertsData.length > 0) {
-          setAlerts(alertsData.map((a: any) => ({
-            id: a.id, type: a.type, severity: a.severity, title: a.title, message: a.message,
-            actionLabel: a.action_label, loadId: a.load_id, timestamp: a.timestamp, dismissed: a.dismissed
-          })));
-        }
-      } catch {
-        // no alerts yet, that's fine
-      }
-    };
-
-    let interval: NodeJS.Timeout;
-
-    const setupPolling = () => {
-      // Since InsForge realtime API differs from Supabase, we'll use a fast poll 
-      // for the demo to ensure alerts pop up consistently without socket management.
-      interval = setInterval(async () => {
         try {
-          const { data: alertsData } = await insforge.database
-            .from("copilot_alerts")
-            .select("*")
-            .order("timestamp", { ascending: false });
-            
-          if (alertsData) {
-            setAlerts(alertsData.map((a: any) => ({
-              id: a.id,
-              type: a.type,
-              severity: a.severity,
-              title: a.title,
-              message: a.message,
-              actionLabel: a.action_label,
-              loadId: a.load_id,
-              timestamp: a.timestamp,
-              dismissed: a.dismissed
-            })));
-          }
+          const detentionResult = await api.detentionImpact({ loadId });
+          setDetention(detentionResult);
         } catch {
-          // silently skip if DB isn't reachable
+          setDetention(null);
         }
-      }, 3000);
-    };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Analysis failed";
+        setDispatch(null);
+        setParking(null);
+        setDetention(null);
+        show(message);
+      } finally {
+        setAnalysisLoading(false);
+      }
+    },
+    [show],
+  );
 
-    fetchData().then(setupPolling);
+  useEffect(() => {
+    if (!selectedLoadId) {
+      setDispatch(null);
+      setParking(null);
+      setDetention(null);
+      return;
+    }
 
-    return () => {
-      if (interval) clearInterval(interval);
-    };
-  }, [show]);
+    void analyzeLoad(selectedLoadId);
+  }, [analyzeLoad, selectedLoadId]);
 
-  const selectedLoad = loads.find((l) => l.id === selectedLoadId) ?? null;
+  const selectedLoad = loads.find((load) => load.id === selectedLoadId) ?? null;
 
-  // Cost breakdown derived from dispatch + detention data
   const cost: CostBreakdown | null = useMemo(() => {
     if (!selectedLoad || !dispatch?.bestDriver) return null;
-    const rd = dispatch.bestDriver;
+
+    const bestDriver = dispatch.bestDriver;
     const fuelEstimate = (selectedLoad.miles / 6) * 3.85;
     const tollEstimate = selectedLoad.miles * 0.0095;
-    const deadheadCost = rd.deadheadMiles * 1.50;
-    const detentionCost = detention ? detention.costImpact.detentionCost : 0;
+    const deadheadCost = bestDriver.deadheadMiles * 1.5;
+    const detentionCost = detention?.costImpact.detentionCost ?? 0;
     const laborCost = selectedLoad.miles * 0.45;
     const totalCost = fuelEstimate + tollEstimate + deadheadCost + detentionCost + laborCost;
+
     return {
       fuelEstimate,
       tollEstimate,
@@ -135,115 +150,61 @@ export default function CopilotPage() {
       totalCost,
       revenue: selectedLoad.rate,
       estimatedMargin: selectedLoad.rate - totalCost,
-      costPerMile: totalCost / selectedLoad.miles,
+      costPerMile: totalCost / Math.max(selectedLoad.miles, 1),
     };
-  }, [selectedLoad, dispatch, detention]);
+  }, [detention, dispatch, selectedLoad]);
 
-  // KPI data derived from current state
   const kpiData = useMemo(() => {
-    const atRisk = alerts.filter(a => !a.dismissed && a.severity !== "info").length;
-    const parkingRisk = alerts.filter(a => a.type === "parking_risk" && !a.dismissed).length;
-    const avgCpm = cost ? cost.costPerMile : 1.82;
+    const activeAlerts = alerts.filter((alert) => !alert.dismissed);
     return {
       activeLoads: loads.length,
-      atRiskLoads: atRisk,
-      avgCostPerMile: avgCpm,
-      parkingRiskLoads: parkingRisk,
+      atRiskLoads: activeAlerts.filter((alert) => alert.severity !== "info").length,
+      avgCostPerMile: cost?.costPerMile ?? 0,
+      parkingRiskLoads: activeAlerts.filter((alert) => alert.type === "parking_risk").length,
       availableDrivers: driversCount,
     };
-  }, [loads, cost, alerts, driversCount]);
+  }, [alerts, cost, driversCount, loads.length]);
 
-  // Risk load IDs for visual indicators
   const riskLoadIds = useMemo(() => {
-    const set = new Set<string>();
-    alerts.forEach(a => {
-      if (a.loadId) set.add(a.loadId);
+    const ids = new Set<string>();
+    alerts.forEach((alert) => {
+      if (alert.loadId) ids.add(alert.loadId);
     });
-    return set;
+    return ids;
   }, [alerts]);
 
-  // ── Demo flow controller ──
-  const advanceDemo = useCallback(async () => {
-    const next = demoStep + 1;
-
-    if (next === 1) {
-      if (loads.length > 0) {
-        setSelectedLoadId(loads[0].id);
-        show("Selected load " + loads[0].id);
-      } else {
-        show("No loads available from DB");
-      }
-    }
-
-    if (next === 2) {
-      if (!selectedLoadId) return;
-      try {
-        const res = await fetch("/api/dispatch-score", {
-          method: "POST",
-          body: JSON.stringify({ loadId: selectedLoadId })
-        }).then(res => res.json());
-        setDispatch(res);
-        show("AI analyzed and ranked drivers for this load");
-      } catch {
-        show("Dispatch scoring failed");
-      }
-    }
-
-    if (next === 3) {
-      if (!selectedLoadId) return;
-      try {
-        // We trigger the autonomous AI dispatcher directly instead of mock detection
-        const triggerRes = await fetch("/api/agent/trigger", {
-          method: "POST",
-          body: JSON.stringify({
-            event: {
-              type: "detention",
-              loadId: selectedLoadId,
-              delayMinutes: 120,
-              description: "Driver stuck at shipper due to backlog"
-            }
-          })
-        });
-        
-        show("⚠ 2-hour detention event fired. Agent analyzing...");
-      } catch {
-        show("Agent simulation failed");
-      }
-    }
-
-    if (next === 4) {
-      // By now, real time subscription should have popped the alert into the `alerts` state
-      show("AI Agent analyzed hazards and emitted alerts!");
-    }
-
-    if (next === 5) {
-      show("✓ Demo complete — Event-driven AI dispatching successful.");
-    }
-
-    setDemoStep(next);
-  }, [demoStep, show, loads, selectedLoadId]);
-
-  const resetDemo = useCallback(() => {
-    setDemoStep(0);
-    setSelectedLoadId(null);
-    setDispatch(null);
-    setParking(null);
-    setDetention(null);
-    setAlerts([]);
-    show("Demo reset");
-  }, [show]);
-
-  // Handle alert action clicks
   const handleAlertAction = useCallback(
-    (alert: CopilotAlert) => {
-      if (alert.loadId) {
-        setSelectedLoadId(alert.loadId);
+    async (alert: CopilotAlert) => {
+      if (!alert.loadId) return;
+
+      setSelectedLoadId(alert.loadId);
+
+      if (alert.actionLabel === "View Impact") {
+        try {
+          const result = await api.detentionImpact({ loadId: alert.loadId });
+          setDetention(result);
+          show(`Loaded live detention impact for ${alert.loadId}`);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Unable to load detention impact";
+          show(message);
+        }
       }
-      if (alert.actionLabel === "View Impact" || alert.actionLabel === "View Parking Plan") {
-        show(`Viewing ${alert.actionLabel} for ${alert.loadId}`);
+
+      if (alert.actionLabel === "View Parking Plan") {
+        try {
+          const result = await api.parkingRisk({
+            loadId: alert.loadId,
+            hosRemaining: dispatch?.bestDriver?.driver.hosDriveRemaining,
+          });
+          setParking(result);
+          show(`Loaded live parking plan for ${alert.loadId}`);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Unable to load parking plan";
+          show(message);
+        }
       }
     },
-    [show],
+    [dispatch?.bestDriver?.driver.hosDriveRemaining, show],
   );
 
   return (
@@ -253,11 +214,36 @@ export default function CopilotPage() {
         <IconRail />
         <main className="flex-1 overflow-auto bg-ink-50">
           <div className="mx-auto max-w-[1440px] space-y-4 p-4 lg:p-6">
-            <DemoScenario
-              currentStep={demoStep}
-              onAdvance={advanceDemo}
-              onReset={resetDemo}
-            />
+            <div className="rounded-xl border border-brand-200 bg-white px-4 py-3 shadow-sm">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <div className="text-xs font-bold uppercase tracking-[0.2em] text-brand-600">
+                    Live CoPilot
+                  </div>
+                  <div className="mt-1 text-sm text-ink-700">
+                    Live InsForge loads and alerts with Gemini-backed dispatch scoring.
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 text-xs">
+                  <span className="rounded-full bg-emerald-100 px-2.5 py-1 font-semibold text-emerald-700">
+                    InsForge
+                  </span>
+                  <span className="rounded-full bg-sky-100 px-2.5 py-1 font-semibold text-sky-700">
+                    Gemini
+                  </span>
+                  {analysisLoading && (
+                    <span className="rounded-full bg-amber-100 px-2.5 py-1 font-semibold text-amber-700">
+                      Analyzing
+                    </span>
+                  )}
+                </div>
+              </div>
+              {bootError && (
+                <div className="mt-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+                  {bootError}
+                </div>
+              )}
+            </div>
 
             <KpiCards data={kpiData} />
 
@@ -269,10 +255,7 @@ export default function CopilotPage() {
                   onSelect={setSelectedLoadId}
                   riskLoadIds={riskLoadIds}
                 />
-                <AlertFeed
-                  alerts={alerts}
-                  onAction={handleAlertAction}
-                />
+                <AlertFeed alerts={alerts} onAction={handleAlertAction} />
               </div>
 
               <div className="lg:col-span-8">
@@ -283,10 +266,10 @@ export default function CopilotPage() {
                   detention={detention}
                   cost={cost}
                   onClose={() => setSelectedLoadId(null)}
-                  demoStep={demoStep}
-                  onAssign={() => show("✓ Driver assigned")}
-                  onReserveParking={() => show("✓ Parking reserved")}
-                  onNotifyCustomer={() => show("📧 Customer notified")}
+                  onAssign={() => show("Assignment action is ready to be wired to a live update route.")}
+                  onReserveParking={() => show("Parking reservation action is ready to be wired to a live update route.")}
+                  onNotifyCustomer={() => show("Customer notification action is ready to be wired to a live workflow.")}
+                  loading={loadingSnapshot || analysisLoading}
                 />
               </div>
             </div>
