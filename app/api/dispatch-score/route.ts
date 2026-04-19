@@ -9,6 +9,45 @@ import { hasInsforgeConfig, insforge } from "@/lib/insforge";
 import { mockDispatchDrivers, mockLoads } from "@/lib/mock";
 import type { DispatchDriver, Load } from "@/lib/types";
 
+let geminiCooldownUntil = 0;
+
+function getErrorStatusCode(error: unknown): number | null {
+  if (typeof error !== "object" || error === null) return null;
+  const maybeStatus = (error as { statusCode?: unknown }).statusCode;
+  return typeof maybeStatus === "number" ? maybeStatus : null;
+}
+
+function getCooldownMs(error: unknown): number {
+  if (typeof error !== "object" || error === null) return 60_000;
+
+  const maybeData = (error as { data?: { error?: { details?: Array<{ retryDelay?: string }> } } }).data;
+  const details = maybeData?.error?.details;
+  const retryDelay = details?.find((detail) => typeof detail?.retryDelay === "string")?.retryDelay;
+
+  if (!retryDelay) return 60_000;
+
+  const seconds = Number.parseInt(retryDelay.replace(/s$/, ""), 10);
+  return Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : 60_000;
+}
+
+function summarizeAiFailure(error: unknown): string {
+  const statusCode = getErrorStatusCode(error);
+
+  if (statusCode === 429) {
+    return "Gemini quota hit; using deterministic scoring temporarily.";
+  }
+
+  if (statusCode === 503) {
+    return "Gemini is temporarily unavailable; using deterministic scoring.";
+  }
+
+  if (error instanceof Error) {
+    return `Gemini request failed; using deterministic scoring. ${error.message}`;
+  }
+
+  return "Gemini request failed; using deterministic scoring.";
+}
+
 async function resolveScenario(loadId: string): Promise<{ load: Load; drivers: DispatchDriver[]; source: string } | Response> {
   if (hasInsforgeConfig && insforge) {
     const client = insforge;
@@ -79,8 +118,16 @@ export async function POST(req: Request) {
       });
     }
 
+    if (Date.now() < geminiCooldownUntil) {
+      return NextResponse.json({
+        ...deterministicRecommendation,
+        source: `${scenario.source}-deterministic-cooldown`,
+      });
+    }
+
     try {
       const result = await generateObject({
+        maxRetries: 0,
         model: google(GEMINI_MODEL),
         system: `You are an expert dispatcher AI for a trucking fleet.
 Rank the available drivers for one load using only the provided load and driver data.
@@ -137,7 +184,12 @@ Return concise reasoning and one overall explanation for the best driver.`,
         source: `${scenario.source}-gemini`,
       });
     } catch (error) {
-      console.error("dispatch-score AI fallback:", error);
+      const statusCode = getErrorStatusCode(error);
+      if (statusCode === 429 || statusCode === 503) {
+        geminiCooldownUntil = Date.now() + getCooldownMs(error);
+      }
+
+      console.warn(summarizeAiFailure(error));
       return NextResponse.json({
         ...deterministicRecommendation,
         source: `${scenario.source}-deterministic-fallback`,

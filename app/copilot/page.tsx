@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "@/lib/client";
 import { mapAlertRow, mapLoadRow } from "@/lib/copilot-data";
 import { hasInsforgeConfig, insforge } from "@/lib/insforge";
@@ -27,6 +27,16 @@ type CopilotSnapshot = {
   alerts: CopilotAlert[];
   live: boolean;
   notice: string | null;
+};
+
+const SNAPSHOT_POLL_MS = 15_000;
+const ANALYSIS_CACHE_MS = 30_000;
+
+type AnalysisSnapshot = {
+  dispatch: DispatchRecommendation | null;
+  parking: ParkingRiskResult | null;
+  detention: DetentionImpactResult | null;
+  expiresAt: number;
 };
 
 function getDemoSnapshot(notice: string): CopilotSnapshot {
@@ -85,6 +95,13 @@ export default function CopilotPage() {
   const [loadingSnapshot, setLoadingSnapshot] = useState(true);
   const [analysisLoading, setAnalysisLoading] = useState(false);
   const { show, Toast } = useToast();
+  const selectedLoadIdRef = useRef<string | null>(null);
+  const analysisCacheRef = useRef<Map<string, AnalysisSnapshot>>(new Map());
+  const inFlightAnalysisRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    selectedLoadIdRef.current = selectedLoadId;
+  }, [selectedLoadId]);
 
   const refreshSnapshot = useCallback(
     async (preserveSelection = true) => {
@@ -98,7 +115,8 @@ export default function CopilotPage() {
         setIsDemoMode(!snapshot.live);
         setBootError(null);
 
-        if (!preserveSelection || !snapshot.loads.some((load) => load.id === selectedLoadId)) {
+        const currentSelection = selectedLoadIdRef.current;
+        if (!preserveSelection || !snapshot.loads.some((load) => load.id === currentSelection)) {
           setSelectedLoadId(snapshot.loads[0]?.id ?? null);
         }
       } catch (error) {
@@ -112,21 +130,37 @@ export default function CopilotPage() {
         setLoadingSnapshot(false);
       }
     },
-    [selectedLoadId],
+    [],
   );
 
   useEffect(() => {
     void refreshSnapshot(false);
 
     const interval = window.setInterval(() => {
+      if (document.visibilityState !== "visible") {
+        return;
+      }
       void refreshSnapshot(true);
-    }, 5000);
+    }, SNAPSHOT_POLL_MS);
 
     return () => window.clearInterval(interval);
   }, [refreshSnapshot]);
 
   const analyzeLoad = useCallback(
     async (loadId: string) => {
+      const cached = analysisCacheRef.current.get(loadId);
+      if (cached && cached.expiresAt > Date.now()) {
+        setDispatch(cached.dispatch);
+        setParking(cached.parking);
+        setDetention(cached.detention);
+        return;
+      }
+
+      if (inFlightAnalysisRef.current === loadId) {
+        return;
+      }
+
+      inFlightAnalysisRef.current = loadId;
       setAnalysisLoading(true);
       try {
         const dispatchResult = await api.dispatchScore(loadId);
@@ -142,8 +176,20 @@ export default function CopilotPage() {
         try {
           const detentionResult = await api.detentionImpact({ loadId });
           setDetention(detentionResult);
+          analysisCacheRef.current.set(loadId, {
+            dispatch: dispatchResult,
+            parking: parkingResult,
+            detention: detentionResult,
+            expiresAt: Date.now() + ANALYSIS_CACHE_MS,
+          });
         } catch {
           setDetention(null);
+          analysisCacheRef.current.set(loadId, {
+            dispatch: dispatchResult,
+            parking: parkingResult,
+            detention: null,
+            expiresAt: Date.now() + ANALYSIS_CACHE_MS,
+          });
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : "Analysis failed";
@@ -152,6 +198,9 @@ export default function CopilotPage() {
         setDetention(null);
         show(message);
       } finally {
+        if (inFlightAnalysisRef.current === loadId) {
+          inFlightAnalysisRef.current = null;
+        }
         setAnalysisLoading(false);
       }
     },
