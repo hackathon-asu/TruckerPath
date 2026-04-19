@@ -1,5 +1,23 @@
 "use client";
 
+import { useState, useEffect } from "react";
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  verticalListSortingStrategy,
+  useSortable,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { cn } from "@/lib/cn";
 import type {
   CostBreakdown,
@@ -23,6 +41,7 @@ import {
   Truck,
   User,
   X,
+  GripVertical,
 } from "lucide-react";
 
 function RiskBadge({ level }: { level: RiskLevel }) {
@@ -76,11 +95,32 @@ function DriverCard({
   isBest: boolean;
   onAssign?: () => void;
 }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: rd.driver.driverId,
+  });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    zIndex: isDragging ? 10 : 1,
+    opacity: isDragging ? 0.8 : 1,
+  };
+
   return (
     <div
-      className={cn("rounded-lg border p-3", isBest ? "border-brand-300 bg-brand-50/40" : "border-ink-200")}
+      ref={setNodeRef}
+      style={style}
+      className={cn("rounded-lg border bg-white p-3", isBest ? "border-brand-300 bg-brand-50/40" : "border-ink-200 shadow-sm")}
     >
       <div className="flex items-center gap-3">
+        <button
+          {...attributes}
+          {...listeners}
+          className="cursor-grab text-ink-400 hover:text-ink-600 active:cursor-grabbing"
+          aria-label="Drag to reorder"
+        >
+          <GripVertical className="h-4 w-4" />
+        </button>
         <div
           className={cn(
             "flex h-9 w-9 items-center justify-center rounded-full text-sm font-bold",
@@ -175,6 +215,38 @@ export function DispatchPanel({
   onNotifyCustomer,
   loading,
 }: Props) {
+  const [rankedDrivers, setRankedDrivers] = useState<RankedDriver[]>([]);
+
+  useEffect(() => {
+    if (dispatch?.rankedDrivers) {
+      setRankedDrivers(dispatch.rankedDrivers.slice(0, 3));
+    } else {
+      setRankedDrivers([]);
+    }
+  }, [dispatch]);
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 5,
+      },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (over && active.id !== over.id) {
+      setRankedDrivers((items) => {
+        const oldIndex = items.findIndex((i) => i.driver.driverId === active.id);
+        const newIndex = items.findIndex((i) => i.driver.driverId === over.id);
+        return arrayMove(items, oldIndex, newIndex);
+      });
+    }
+  };
+
   if (!load) {
     return (
       <div className="card flex h-full items-center justify-center p-8 text-center">
@@ -256,14 +328,25 @@ export function DispatchPanel({
             </div>
 
             <div className="space-y-2">
-              {(dispatch.rankedDrivers ?? []).slice(0, 3).map((rd, index) => (
-                <DriverCard
-                  key={rd.driver.driverId}
-                  rd={rd}
-                  isBest={index === 0}
-                  onAssign={index === 0 ? onAssign : undefined}
-                />
-              ))}
+              <DndContext
+                sensors={sensors}
+                collisionDetection={closestCenter}
+                onDragEnd={handleDragEnd}
+              >
+                <SortableContext
+                  items={rankedDrivers.map((rd) => rd.driver.driverId)}
+                  strategy={verticalListSortingStrategy}
+                >
+                  {rankedDrivers.map((rd, index) => (
+                    <DriverCard
+                      key={rd.driver.driverId}
+                      rd={rd}
+                      isBest={index === 0}
+                      onAssign={index === 0 ? onAssign : undefined}
+                    />
+                  ))}
+                </SortableContext>
+              </DndContext>
             </div>
           </Section>
         )}

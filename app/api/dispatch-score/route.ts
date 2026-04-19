@@ -9,6 +9,8 @@ import { hasInsforgeConfig, insforge } from "@/lib/insforge";
 import { createDemoDispatcherSnapshot } from "@/lib/reports-demo";
 import type { DispatchDriver, Load } from "@/lib/types";
 
+export const dynamic = "force-dynamic";
+
 let geminiCooldownUntil = 0;
 
 function getErrorStatusCode(error: unknown): number | null {
@@ -183,21 +185,37 @@ export async function POST(req: Request) {
     }
 
     try {
+      const baselineData = deterministicRecommendation.rankedDrivers.map((d) => ({
+        driverId: d.driver.driverId,
+        name: `${d.driver.firstName} ${d.driver.lastName}`,
+        tripFeasible: d.tripFeasible,
+        deadheadMiles: d.deadheadMiles,
+        estimatedCost: d.estimatedCost,
+        baselineScore: d.score,
+      }));
+
       const result = await generateObject({
         maxRetries: 0,
         model: google(GEMINI_MODEL),
         system: `You are an expert dispatcher AI for a trucking fleet.
-Rank the available drivers for one load using only the provided load and driver data.
+Rank the available drivers for one load using the provided load, driver data, and baseline calculations.
 Optimize for:
-1. Trip feasibility under HOS constraints
+1. Trip feasibility under HOS constraints (CRITICAL)
 2. Deadhead distance and pickup ETA
 3. Cost per mile
 4. Driver readiness
 
-Be conservative. If a driver is not feasible, score them significantly lower.
-Scores must be between 0 and 100.
+CRITICAL RULES:
+- If a driver's tripFeasible is false, their score MUST be strictly penalized (e.g. below 50).
+- The bestDriverId MUST be a driver whose tripFeasible is true, unless no such driver exists.
+- Scores must be between 0 and 100.
 Return concise reasoning and one overall explanation for the best driver.`,
-        prompt: `Load: ${JSON.stringify(scenario.load, null, 2)}\n\nDrivers: ${JSON.stringify(scenario.drivers, null, 2)}`,
+        prompt: `Load: ${JSON.stringify(scenario.load, null, 2)}
+
+Drivers: ${JSON.stringify(scenario.drivers, null, 2)}
+
+Baseline Math (Use these for your feasibility, deadhead, and cost facts):
+${JSON.stringify(baselineData, null, 2)}`,
         schema: z.object({
           rankedDrivers: z.array(
             z.object({
@@ -227,10 +245,17 @@ Return concise reasoning and one overall explanation for the best driver.`,
         .filter((item): item is NonNullable<typeof item> => item !== null)
         .sort((a, b) => b.score - a.score);
 
-      const bestDriver =
+      let bestDriver =
         result.object.bestDriverId !== null
           ? rankedDrivers.find((item) => item.driver.driverId === result.object.bestDriverId) ?? null
           : rankedDrivers[0] ?? null;
+
+      if (bestDriver && !bestDriver.tripFeasible) {
+        const bestFeasible = rankedDrivers.find((item) => item.tripFeasible);
+        if (bestFeasible) {
+          bestDriver = bestFeasible;
+        }
+      }
 
       return NextResponse.json({
         loadId: scenario.load.id,

@@ -22,6 +22,7 @@ import type {
 import {
   NORMALIZED_ROUTE_RESTRICTIONS,
   getRoutingSourceById,
+  PRIORITY_STATE_OVERLAY_BOUNDS,
 } from "./truck-routing-data";
 
 const MPG = 6;
@@ -153,6 +154,7 @@ const defaultProfile: RoutingProfile = {
   hazmat: false,
   avoid_areas: [],
   avoid_bridges: [],
+  avoid_restriction_ids: [],
   route_policy: defaultPolicy,
 };
 
@@ -254,6 +256,37 @@ export const hereRoutingBackend: RoutingBackend = {
 
       if (profile.hazmat) {
         params.set("truck[shippedHazardousGoods]", "explosive,gas,flammable,organic,poison,radioactive,corrosive");
+      }
+
+      const avoidBboxes: string[] = [];
+
+      if (profile.avoid_areas && profile.avoid_areas.length > 0) {
+        const customBboxes = profile.avoid_areas.map((area) => {
+          const ring = area.coordinates[0] ?? [];
+          if (ring.length === 0) return null;
+          const latitudes = ring.map((point) => point.lat);
+          const longitudes = ring.map((point) => point.lng);
+          const min_lat = Math.min(...latitudes);
+          const max_lat = Math.max(...latitudes);
+          const min_lng = Math.min(...longitudes);
+          const max_lng = Math.max(...longitudes);
+          return `bbox:${min_lng},${min_lat},${max_lng},${max_lat}`;
+        }).filter(Boolean);
+        avoidBboxes.push(...(customBboxes as string[]));
+      }
+
+      if (profile.avoid_restriction_ids && profile.avoid_restriction_ids.length > 0) {
+        for (const id of profile.avoid_restriction_ids) {
+          const rest = NORMALIZED_ROUTE_RESTRICTIONS.find(r => r.id === id);
+          if (rest && rest.bbox) {
+            avoidBboxes.push(`bbox:${rest.bbox.min_lng},${rest.bbox.min_lat},${rest.bbox.max_lng},${rest.bbox.max_lat}`);
+          }
+        }
+      }
+
+      if (avoidBboxes.length > 0) {
+        // HERE v8 syntax: avoid[areas]=bbox:west,south,east,north|bbox:...
+        params.set("avoid[areas]", avoidBboxes.join("|"));
       }
     }
 
@@ -478,6 +511,7 @@ function normalizeProfile(profile?: RoutingProfile): RoutingProfile {
     ...profile,
     avoid_areas: profile?.avoid_areas ?? [],
     avoid_bridges: profile?.avoid_bridges ?? [],
+    avoid_restriction_ids: profile?.avoid_restriction_ids ?? [],
     route_policy: {
       ...defaultPolicy,
       ...(profile?.route_policy ?? {}),
@@ -509,6 +543,16 @@ function screenRoute({
   if (!usedFallback && profile.route_policy?.enforce_permitted_network) {
     const federalNetworkNotice = assessFederalBackbone(route);
     if (federalNetworkNotice) advisories.push(federalNetworkNotice);
+
+    const borderResults = assessStateBorderCrossings(route, profile);
+    for (const res of borderResults) {
+      if (res.notice.severity === "critical") {
+        violations.push(res.notice);
+      } else {
+        advisories.push(res.notice);
+      }
+      overlays.push(res.overlay);
+    }
   }
 
   for (const area of profile.avoid_areas ?? []) {
@@ -710,6 +754,81 @@ function buildCoverageNotice(coverage: {
     states: [],
     restrictionIds: [],
   };
+}
+
+function assessStateBorderCrossings(route: GeneratedRoute, profile: RoutingProfile): { notice: RouteComplianceNotice; overlay: RouteOverlaySegment }[] {
+  const results: { notice: RouteComplianceNotice; overlay: RouteOverlaySegment }[] = [];
+  const isSpecialLoad =
+    profile.hazmat ||
+    profile.weight_limit > 80000 ||
+    profile.truck_ft_width > 8 ||
+    (profile.truck_ft_width === 8 && profile.truck_in_width > 6) ||
+    profile.truck_ft_length > 65 ||
+    profile.truck_ft_height > 13 ||
+    (profile.truck_ft_height === 13 && profile.truck_in_height > 6);
+
+  let currentState: string | null = null;
+  const pointCount = route.polyline.length;
+
+  for (let i = 0; i < pointCount; i++) {
+    const [lat, lng] = route.polyline[i];
+    const matchingStates: string[] = [];
+    for (const [stateCode, bbox] of Object.entries(PRIORITY_STATE_OVERLAY_BOUNDS)) {
+      if (lat >= bbox.min_lat && lat <= bbox.max_lat && lng >= bbox.min_lng && lng <= bbox.max_lng) {
+        matchingStates.push(stateCode);
+      }
+    }
+
+    let detectedState: string | null = null;
+    if (matchingStates.length > 0) {
+      if (currentState && matchingStates.includes(currentState)) {
+        detectedState = currentState;
+      } else {
+        detectedState = matchingStates[0];
+      }
+    }
+
+    if (detectedState && currentState && detectedState !== currentState) {
+      const severity = isSpecialLoad ? "critical" : "info";
+      const status = isSpecialLoad ? "violation" : "advisory";
+      const title = `State Border Crossing: ${currentState} → ${detectedState}`;
+      const message = isSpecialLoad
+        ? `Oversize/Overweight or Hazmat load crossed state lines from ${currentState} into ${detectedState}. Valid Port of Entry (POE) inspection and coordinated state permits are mandatory.`
+        : `Route crosses from ${currentState} into ${detectedState}. Verify standard interstate credentials (IFTA/IRP).`;
+
+      const notice: RouteComplianceNotice = {
+        id: `border-crossing:${currentState}-${detectedState}`,
+        type: "state_border_crossing",
+        severity,
+        title,
+        message,
+        sourceIds: [],
+        states: [currentState, detectedState],
+        restrictionIds: [],
+      };
+
+      const overlay: RouteOverlaySegment = {
+        id: `overlay:border-crossing:${currentState}-${detectedState}`,
+        type: "state_border_crossing",
+        status,
+        severity,
+        title,
+        message,
+        polyline: [[lat, lng]],
+        sourceIds: [],
+        states: [currentState, detectedState],
+      };
+
+      results.push({ notice, overlay });
+      currentState = detectedState;
+    } else if (detectedState && !currentState) {
+      currentState = detectedState;
+    }
+  }
+
+  // Deduplicate by title to prevent jitter
+  const uniqueResults = Array.from(new Map(results.map((r) => [r.notice.title, r])).values());
+  return uniqueResults;
 }
 
 function assessFederalBackbone(route: GeneratedRoute): RouteComplianceNotice | null {
@@ -1812,6 +1931,7 @@ function dedupeNearDuplicates(routes: GeneratedRoute[]) {
 }
 
 function assignLabels(routes: GeneratedRoute[]): GeneratedRoute[] {
+  if (routes.length === 0) return [];
   const fastest = [...routes].sort((a, b) => a.minutes - b.minutes)[0];
   const labeled: GeneratedRoute[] = [{ ...fastest, label: "Fastest Route" }];
 
@@ -1829,6 +1949,16 @@ function assignLabels(routes: GeneratedRoute[]): GeneratedRoute[] {
         !usedIds.has(route.id) && route.fuelCost + route.tolls < fastestTotal - 0.5,
     );
   if (economical) labeled.push({ ...economical, label: "Most Economical" });
+
+  // Include any remaining alternative routes
+  const remaining = routes.filter(r => !usedIds.has(r.id));
+  let altIndex = 1;
+  for (const route of remaining) {
+    const label = remaining.length > 1 ? `Alternative ${altIndex}` : "Alternative Route";
+    labeled.push({ ...route, label: (label as any) });
+    usedIds.add(route.id);
+    altIndex++;
+  }
 
   return labeled;
 }

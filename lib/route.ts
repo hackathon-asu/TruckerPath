@@ -5,7 +5,7 @@ import type {
   RoutingProfile,
 } from "./types";
 
-export type RouteLabel = "Fastest Route" | "Shortest Route" | "Most Economical";
+export type RouteLabel = "Fastest Route" | "Shortest Route" | "Most Economical" | "Alternative Route" | string;
 export type RoutingBackendName = "osrm" | "here";
 export type RouteBasis = "generic-driving" | "federal-backbone-screened" | "state-overlay-screened";
 export type RouteNoticeSeverity = "info" | "warning" | "critical";

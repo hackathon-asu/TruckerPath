@@ -63,7 +63,8 @@ export type RouteRestrictionType =
   | "state_review_zone"
   | "escort_requirement"
   | "avoid_area"
-  | "avoid_bridge_rule";
+  | "avoid_bridge_rule"
+  | "state_border_crossing";
 export type RestrictionVerificationStatus =
   | "official-source"
   | "normalized-reviewed"
@@ -173,6 +174,7 @@ export interface RoutingProfile {
   hazmat?: boolean;
   avoid_areas?: AvoidArea[];
   avoid_bridges?: AvoidBridgeRule[];
+  avoid_restriction_ids?: string[];
   route_policy?: RoutePolicy;
 }
 

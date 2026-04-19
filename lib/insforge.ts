@@ -1,6 +1,6 @@
 import { createClient } from "@insforge/sdk";
 
-const API_URL = process.env.NEXT_PUBLIC_INSFORGE_URL?.trim() ?? "";
+const API_URL = process.env.NEXT_PUBLIC_INSFORGE_URL?.trim().replace(/\/+$/, "") ?? "";
 const ANON_KEY = process.env.NEXT_PUBLIC_INSFORGE_ANON_KEY?.trim() ?? "";
 
 export const hasInsforgeConfig = Boolean(API_URL && ANON_KEY);

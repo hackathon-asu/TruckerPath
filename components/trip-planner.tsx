@@ -1,6 +1,23 @@
 "use client";
 import { useEffect, useState } from "react";
 import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  verticalListSortingStrategy,
+  useSortable,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import {
   AlertTriangle,
   ChevronRight,
   Clock,
@@ -114,6 +131,40 @@ export function TripPlanner({
     setActiveRouteId(null);
   };
 
+  const handleBypass = (notice: any) => {
+    if (notice?.restrictionIds?.length > 0 && profile) {
+      setProfile({
+        ...profile,
+        avoid_restriction_ids: [
+          ...(profile.avoid_restriction_ids ?? []),
+          ...notice.restrictionIds,
+        ],
+      });
+    }
+  };
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 5,
+      },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (over && active.id !== over.id) {
+      setStops((items) => {
+        const oldIndex = items.findIndex((i) => i.id === active.id);
+        const newIndex = items.findIndex((i) => i.id === over.id);
+        return arrayMove(items, oldIndex, newIndex);
+      });
+    }
+  };
+
   return (
     <div className="flex h-full flex-col bg-ink-50">
       <Tabs />
@@ -127,17 +178,28 @@ export function TripPlanner({
 
         {stops.length > 0 && (
           <div className="card divide-y divide-ink-200">
-            {stops.map((s, i) => (
-              <StopRow
-                key={s.id}
-                index={i}
-                count={stops.length}
-                stop={s}
-                leg={i > 0 ? active?.legs[i - 1] : undefined}
-                cumulativeMinutes={sumMinutes(active, i)}
-                onRemove={() => removeStop(s.id)}
-              />
-            ))}
+            <DndContext
+              sensors={sensors}
+              collisionDetection={closestCenter}
+              onDragEnd={handleDragEnd}
+            >
+              <SortableContext
+                items={stops.map((s) => s.id)}
+                strategy={verticalListSortingStrategy}
+              >
+                {stops.map((s, i) => (
+                  <StopRow
+                    key={s.id}
+                    index={i}
+                    count={stops.length}
+                    stop={s}
+                    leg={i > 0 ? active?.legs[i - 1] : undefined}
+                    cumulativeMinutes={sumMinutes(active, i)}
+                    onRemove={() => removeStop(s.id)}
+                  />
+                ))}
+              </SortableContext>
+            </DndContext>
           </div>
         )}
 
@@ -178,10 +240,20 @@ export function TripPlanner({
               <StatusBadge tone="slate" label={humanizeBasis(active.routeBasis)} />
             </div>
             {active.violations.length > 0 && (
-              <RouteNotice tone="critical" title={active.violations[0].title} message={active.violations[0].message} />
+              <RouteNotice
+                tone="critical"
+                title={active.violations[0].title}
+                message={active.violations[0].message}
+                onBypass={active.violations[0].restrictionIds?.length > 0 ? () => handleBypass(active.violations[0]) : undefined}
+              />
             )}
             {active.violations.length === 0 && topAdvisory && (
-              <RouteNotice tone="warning" title={topAdvisory.title} message={topAdvisory.message} />
+              <RouteNotice
+                tone="warning"
+                title={topAdvisory.title}
+                message={topAdvisory.message}
+                onBypass={topAdvisory.restrictionIds?.length > 0 ? () => handleBypass(topAdvisory) : undefined}
+              />
             )}
           </div>
         )}
@@ -368,10 +440,22 @@ function StopRow({
   cumulativeMinutes?: number;
   onRemove: () => void;
 }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: stop.id,
+  });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    zIndex: isDragging ? 10 : 1,
+    opacity: isDragging ? 0.8 : 1,
+  };
+
   const role = index === 0 ? "Start" : index === count - 1 ? "Stop" : "Waypoint";
   const arrival = cumulativeMinutes != null ? arrivalFromNow(cumulativeMinutes) : null;
+  
   return (
-    <div className="p-3">
+    <div ref={setNodeRef} style={style} className={cn("p-3 bg-white", isDragging && "shadow-sm border border-ink-200")}>
       {leg && (
         <div className="mb-2 flex items-center gap-3 pl-8 text-[11px] text-ink-500">
           <span>{formatMiles(leg.miles)}</span>
@@ -382,7 +466,12 @@ function StopRow({
         </div>
       )}
       <div className="flex items-start gap-2">
-        <button className="cursor-grab text-ink-300" title="Reorder">
+        <button
+          {...attributes}
+          {...listeners}
+          className="cursor-grab text-ink-300 hover:text-ink-500 active:cursor-grabbing mt-1"
+          title="Reorder"
+        >
           <GripVertical className="h-4 w-4" />
         </button>
         <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-brand-50 text-[10px] font-semibold text-brand-500">
@@ -465,10 +554,12 @@ function RouteNotice({
   tone,
   title,
   message,
+  onBypass,
 }: {
   tone: "critical" | "warning";
   title: string;
   message: string;
+  onBypass?: () => void;
 }) {
   const cls =
     tone === "critical"
@@ -477,10 +568,21 @@ function RouteNotice({
   return (
     <div className={cn("mt-3 rounded-md border px-3 py-2 text-[11px]", cls)}>
       <div className="flex items-start gap-2">
-        <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-        <div>
+        <AlertTriangle className={cn("mt-0.5 h-3.5 w-3.5 shrink-0", tone === "critical" ? "text-rose-600" : "text-amber-600")} />
+        <div className="min-w-0 flex-1">
           <div className="font-semibold">{title}</div>
-          <div className="mt-0.5 leading-relaxed">{message}</div>
+          <div className="mt-0.5 leading-relaxed opacity-90">{message}</div>
+          {onBypass && (
+            <button
+              onClick={onBypass}
+              className={cn(
+                "mt-2 rounded-md px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider transition-colors",
+                tone === "critical" ? "bg-rose-100 hover:bg-rose-200 text-rose-800" : "bg-amber-100 hover:bg-amber-200 text-amber-800"
+              )}
+            >
+              Auto-Bypass
+            </button>
+          )}
         </div>
       </div>
     </div>

@@ -49,9 +49,16 @@ Provide an overall explanation for the top recommended best driver choice.`,
       };
     }).sort((a, b) => b.score - a.score);
 
-    const bestDriver = result.object.bestDriverId 
+    let bestDriver = result.object.bestDriverId 
       ? rankedDrivers.find(d => d.driver.driverId === result.object.bestDriverId) 
       : (rankedDrivers[0] ?? null);
+
+    if (bestDriver && !bestDriver.tripFeasible) {
+      const bestFeasible = rankedDrivers.find(d => d.tripFeasible);
+      if (bestFeasible) {
+        bestDriver = bestFeasible;
+      }
+    }
 
     return Response.json({
       loadId: load.id,
