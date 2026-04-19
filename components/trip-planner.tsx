@@ -19,11 +19,10 @@ import { cn } from "@/lib/cn";
 import { api } from "@/lib/client";
 import { formatDuration, formatMiles } from "@/lib/format";
 import { useSavedRoutes } from "@/lib/saved-routes";
+import type { RouteAlt } from "@/lib/route";
 import type { RoutingProfile, StopPoint } from "@/lib/types";
 import { StopSearch } from "./stop-search";
 import { RoutingProfileCard } from "./routing-profile-card";
-
-type RouteInfo = { miles: number; minutes: number; polyline: [number, number][] };
 
 interface Props {
   profiles: RoutingProfile[];
@@ -31,9 +30,16 @@ interface Props {
   setProfile: (p: RoutingProfile) => void;
   stops: StopPoint[];
   setStops: (s: StopPoint[]) => void;
-  route: RouteInfo | null;
-  setRoute: (r: RouteInfo | null) => void;
+  routes: RouteAlt[];
+  setRoutes: (r: RouteAlt[]) => void;
+  activeRouteId: string | null;
+  setActiveRouteId: (id: string | null) => void;
   onOpenReport: () => void;
+  onOpenDirections: () => void;
+  onOpenPois: () => void;
+  onOpenFuel: () => void;
+  onOpenWeather: () => void;
+  onOpenDocuments: () => void;
   onOpenAddProfile: () => void;
   onSendRoute: () => void;
   sending: boolean;
@@ -45,37 +51,49 @@ export function TripPlanner({
   setProfile,
   stops,
   setStops,
-  route,
-  setRoute,
+  routes,
+  setRoutes,
+  activeRouteId,
+  setActiveRouteId,
   onOpenReport,
+  onOpenDirections,
+  onOpenPois,
+  onOpenFuel,
+  onOpenWeather,
+  onOpenDocuments,
   onOpenAddProfile,
   onSendRoute,
   sending,
 }: Props) {
   const [tab, setTab] = useState<"recent" | "saved" | "shared">("recent");
   const { items: saved, save: saveRoute, remove } = useSavedRoutes();
+  const active = routes.find((r) => r.id === activeRouteId) ?? routes[0] ?? null;
 
   useEffect(() => {
     if (stops.length < 2) {
-      setRoute(null);
+      setRoutes([]);
+      setActiveRouteId(null);
       return;
     }
     let alive = true;
     api
       .calcRoute(stops.map((s) => ({ latitude: s.latitude, longitude: s.longitude })))
       .then((r) => {
-        if (alive) setRoute(r);
+        if (!alive) return;
+        setRoutes(r.routes);
+        setActiveRouteId(r.routes[0]?.id ?? null);
       });
     return () => {
       alive = false;
     };
-  }, [stops, setRoute]);
+  }, [stops, setRoutes, setActiveRouteId]);
 
   const addStop = (s: StopPoint) => setStops([...stops, s]);
   const removeStop = (id: string) => setStops(stops.filter((x) => x.id !== id));
   const clearTrip = () => {
     setStops([]);
-    setRoute(null);
+    setRoutes([]);
+    setActiveRouteId(null);
   };
 
   return (
@@ -92,33 +110,46 @@ export function TripPlanner({
         {stops.length > 0 && (
           <div className="card divide-y divide-ink-200">
             {stops.map((s, i) => (
-              <StopRow key={s.id} index={i} count={stops.length} stop={s} onRemove={() => removeStop(s.id)} />
+              <StopRow
+                key={s.id}
+                index={i}
+                count={stops.length}
+                stop={s}
+                leg={i > 0 ? active?.legs[i - 1] : undefined}
+                cumulativeMinutes={sumMinutes(active, i)}
+                onRemove={() => removeStop(s.id)}
+              />
             ))}
           </div>
         )}
 
         <StopSearch onPick={addStop} />
 
-        {route && stops.length >= 2 && (
+        {routes.length > 0 && active && (
           <div className="card p-3">
-            <div className="flex items-baseline justify-between">
-              <div className="flex items-baseline gap-4">
-                <TabLabel active>Route 1</TabLabel>
-                <TabLabel>Route 2</TabLabel>
-              </div>
-              <span className="text-[11px] text-ink-500">
+            <div className="flex items-center gap-4 border-b border-ink-100 pb-2">
+              {routes.map((r, i) => (
+                <button
+                  key={r.id}
+                  onClick={() => setActiveRouteId(r.id)}
+                  className={cn(
+                    "text-xs font-semibold",
+                    r.id === active.id ? "text-brand-500" : "text-ink-400 hover:text-ink-600",
+                  )}
+                >
+                  Route {i + 1}
+                </button>
+              ))}
+              <span className="ml-auto text-[11px] text-ink-500">
                 {stops.length} stop{stops.length > 1 ? "s" : ""}
               </span>
             </div>
-            <div className="mt-1 text-xs font-semibold uppercase text-brand-500">Fastest Route</div>
-            <div className="mt-2 grid grid-cols-3 gap-2 text-center">
-              <Metric icon={<Clock className="h-3.5 w-3.5" />} label="Drive time" value={formatDuration(route.minutes)} />
-              <Metric icon={<MapIcon className="h-3.5 w-3.5" />} label="Est. miles" value={formatMiles(route.miles)} />
-              <Metric
-                icon={<Fuel className="h-3.5 w-3.5" />}
-                label="Fuel"
-                value={`${(route.miles / 6).toFixed(1)}gal`}
-              />
+            <div className="mt-2 text-xs font-semibold uppercase text-brand-500">{active.label}</div>
+            <div className="mt-2 grid grid-cols-4 gap-2 text-center">
+              <Metric icon={<Clock className="h-3.5 w-3.5" />} label="Drive Time" value={formatDuration(active.minutes)} />
+              <Metric icon={<Fuel className="h-3.5 w-3.5" />} label="Est. Gallons" value={`${active.gallons.toFixed(0)}gal`} />
+              <Metric icon={<Fuel className="h-3.5 w-3.5" />} label="Est. Fuel Cost" value={`$${formatThousands(active.fuelCost)}`} />
+              <Metric icon={<MapIcon className="h-3.5 w-3.5" />} label="Tolls" value={`$${active.tolls.toFixed(1)}`} />
             </div>
           </div>
         )}
@@ -126,10 +157,11 @@ export function TripPlanner({
         {stops.length >= 2 && (
           <div className="card divide-y divide-ink-200 text-sm">
             <ActionRow icon={<FileBarChart className="h-4 w-4" />} label="Trip Report" onClick={onOpenReport} />
-            <ActionRow icon={<Fuel className="h-4 w-4" />} label="Fuel Plan" />
-            <ActionRow icon={<Navigation className="h-4 w-4" />} label="Directions" />
-            <ActionRow icon={<MapPin className="h-4 w-4" />} label="POIs Along Route" />
-            <ActionRow icon={<MapIcon className="h-4 w-4" />} label="Weather Alerts" />
+            <ActionRow icon={<Fuel className="h-4 w-4" />} label="Fuel Plan" onClick={onOpenFuel} />
+            <ActionRow icon={<Navigation className="h-4 w-4" />} label="Directions" onClick={onOpenDirections} />
+            <ActionRow icon={<MapPin className="h-4 w-4" />} label="POIs Along Route" onClick={onOpenPois} />
+            <ActionRow icon={<MapIcon className="h-4 w-4" />} label="Weather Alerts" onClick={onOpenWeather} />
+            <ActionRow icon={<FileBarChart className="h-4 w-4" />} label="Documents" onClick={onOpenDocuments} />
           </div>
         )}
 
@@ -137,7 +169,7 @@ export function TripPlanner({
 
         {tab === "saved" && (
           <SavedList
-            items={saved.map((r) => ({ id: r.id, name: r.name, miles: r.miles ?? 0 }))}
+            items={saved}
             onLoad={(id) => {
               const r = saved.find((x) => x.id === id);
               if (r) setStops(r.stops);
@@ -169,8 +201,8 @@ export function TripPlanner({
                 saveRoute({
                   name: `${stops[0].address_name} → ${stops[stops.length - 1].address_name}`,
                   stops,
-                  miles: route?.miles,
-                  minutes: route?.minutes,
+                  miles: active?.miles,
+                  minutes: active?.minutes,
                   profileId: profile?.id,
                 });
               }}
@@ -225,19 +257,6 @@ export function TripPlanner({
   }
 }
 
-function TabLabel({ active, children }: { active?: boolean; children: React.ReactNode }) {
-  return (
-    <span
-      className={cn(
-        "text-xs font-semibold",
-        active ? "text-brand-500" : "text-ink-400",
-      )}
-    >
-      {children}
-    </span>
-  );
-}
-
 function Metric({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
   return (
     <div className="rounded-md bg-ink-50 p-2">
@@ -254,31 +273,71 @@ function StopRow({
   index,
   count,
   stop,
+  leg,
+  cumulativeMinutes,
   onRemove,
 }: {
   index: number;
   count: number;
   stop: StopPoint;
+  leg?: { miles: number; minutes: number; tolls: number };
+  cumulativeMinutes?: number;
   onRemove: () => void;
 }) {
-  const role = index === 0 ? "Start" : index === count - 1 ? "Stop" : "Stop";
+  const role = index === 0 ? "Start" : index === count - 1 ? "Stop" : "Waypoint";
+  const arrival = cumulativeMinutes != null ? arrivalFromNow(cumulativeMinutes) : null;
   return (
-    <div className="flex items-start gap-2 p-3">
-      <button className="cursor-grab text-ink-300" title="Reorder">
-        <GripVertical className="h-4 w-4" />
-      </button>
-      <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-brand-50 text-[10px] font-semibold text-brand-500">
-        {String.fromCharCode(65 + index)}
+    <div className="p-3">
+      {leg && (
+        <div className="mb-2 flex items-center gap-3 pl-8 text-[11px] text-ink-500">
+          <span>{formatMiles(leg.miles)}</span>
+          <span>·</span>
+          <span>{formatDuration(leg.minutes)}</span>
+          <span>·</span>
+          <span>Toll ${leg.tolls.toFixed(1)}</span>
+        </div>
+      )}
+      <div className="flex items-start gap-2">
+        <button className="cursor-grab text-ink-300" title="Reorder">
+          <GripVertical className="h-4 w-4" />
+        </button>
+        <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-brand-50 text-[10px] font-semibold text-brand-500">
+          {String.fromCharCode(65 + index)}
+        </div>
+        <div className="min-w-0 flex-1">
+          {arrival && (
+            <div className="text-[11px] font-medium text-ink-900">
+              {arrival.time} <span className="text-ink-400">· {arrival.date}</span>
+            </div>
+          )}
+          <div className="truncate text-sm font-semibold text-ink-900">{stop.address_name}</div>
+          <div className="text-[11px] text-ink-500">{role}</div>
+        </div>
+        <button onClick={onRemove} className="rounded p-1 text-ink-400 hover:bg-ink-100 hover:text-rose-500">
+          <X className="h-3.5 w-3.5" />
+        </button>
       </div>
-      <div className="min-w-0 flex-1">
-        <div className="truncate text-sm font-semibold text-ink-900">{stop.address_name}</div>
-        <div className="text-[11px] text-ink-500">{role}</div>
-      </div>
-      <button onClick={onRemove} className="rounded p-1 text-ink-400 hover:bg-ink-100 hover:text-rose-500">
-        <X className="h-3.5 w-3.5" />
-      </button>
     </div>
   );
+}
+
+function sumMinutes(active: RouteAlt | null, index: number): number | undefined {
+  if (!active || index === 0) return 0;
+  let total = 0;
+  for (let i = 0; i < index && i < active.legs.length; i++) total += active.legs[i].minutes;
+  return total;
+}
+
+function arrivalFromNow(minutes: number): { time: string; date: string } {
+  const d = new Date(Date.now() + minutes * 60_000);
+  return {
+    time: d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false }) + " EST",
+    date: d.toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+  };
+}
+
+function formatThousands(n: number): string {
+  return n.toLocaleString("en-US", { maximumFractionDigits: 0 });
 }
 
 function ActionRow({
@@ -328,7 +387,7 @@ function SavedList({
   onLoad,
   onRemove,
 }: {
-  items: { id: string; name: string; miles: number }[];
+  items: { id: string; name: string; miles?: number; stops: StopPoint[] }[];
   onLoad: (id: string) => void;
   onRemove: (id: string) => void;
 }) {
@@ -342,16 +401,31 @@ function SavedList({
       </div>
     );
   return (
-    <div className="card divide-y divide-ink-200">
+    <div className="space-y-2">
       {items.map((r) => (
-        <div key={r.id} className="flex items-center gap-2 p-3 text-sm">
-          <button onClick={() => onLoad(r.id)} className="min-w-0 flex-1 truncate text-left hover:text-brand-500">
-            <div className="truncate font-medium">{r.name}</div>
-            <div className="text-[11px] text-ink-500">{formatMiles(r.miles)}</div>
-          </button>
-          <button onClick={() => onRemove(r.id)} className="rounded p-1 text-ink-400 hover:bg-ink-100 hover:text-rose-500">
-            <Trash2 className="h-4 w-4" />
-          </button>
+        <div key={r.id} className="card p-3">
+          <div className="flex items-start gap-2">
+            <button onClick={() => onLoad(r.id)} className="min-w-0 flex-1 text-left hover:text-brand-500">
+              <div className="truncate text-sm font-semibold text-ink-900">{r.name}</div>
+              {r.miles != null && <div className="text-[11px] text-ink-500">{formatMiles(r.miles)}</div>}
+            </button>
+            <button
+              onClick={() => onRemove(r.id)}
+              className="rounded p-1 text-ink-400 hover:bg-ink-100 hover:text-rose-500"
+            >
+              <Trash2 className="h-4 w-4" />
+            </button>
+          </div>
+          <ol className="mt-2 space-y-1 pl-1">
+            {r.stops.map((s, i) => (
+              <li key={s.id} className="flex items-center gap-2 text-[12px] text-ink-700">
+                <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-brand-50 text-[9px] font-semibold text-brand-500">
+                  {String.fromCharCode(65 + i)}
+                </span>
+                <span className="truncate">{s.address_name}</span>
+              </li>
+            ))}
+          </ol>
         </div>
       ))}
     </div>
