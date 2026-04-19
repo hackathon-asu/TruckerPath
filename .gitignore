@@ -28,3 +28,8 @@ extra/
 .roo
 .trae
 .windsurf
+
+mcp.json
+test-insforge.mjs
+test-insforge2.mjs
+test-insforge3.mjs
