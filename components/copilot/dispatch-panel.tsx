@@ -220,6 +220,11 @@ export function DispatchPanel({
               <div className="flex items-center gap-1.5 font-semibold">
                 <Sparkles className="h-3 w-3" />
                 AI Recommendation
+                {(dispatch as any).source === "insforge" ? (
+                  <span className="ml-auto rounded-full bg-emerald-100 px-2 py-0.5 text-[9px] font-bold text-emerald-700">⚡ Live DB</span>
+                ) : (
+                  <span className="ml-auto rounded-full bg-amber-100 px-2 py-0.5 text-[9px] font-bold text-amber-700">🔶 Demo Data</span>
+                )}
               </div>
               <p className="mt-1 leading-relaxed">{dispatch.explanation}</p>
               <div className="mt-1 text-[10px] text-brand-500">
@@ -227,7 +232,7 @@ export function DispatchPanel({
               </div>
             </div>
             <div className="space-y-2">
-              {dispatch.rankedDrivers.slice(0, 3).map((rd, i) => (
+              {(dispatch.rankedDrivers ?? []).slice(0, 3).map((rd, i) => (
                 <DriverCard
                   key={rd.driver.driverId}
                   rd={rd}

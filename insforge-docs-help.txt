@@ -1,0 +1,16 @@
+Usage: insforge docs [options] [feature] [language]
+
+Browse InsForge SDK documentation
+
+Options:
+  -h, --help  display help for command
+
+Features: db, storage, functions, auth, ai, realtime
+Languages: typescript, swift, kotlin, rest-api
+
+Examples:
+  npx @insforge/cli docs                        List all available docs
+  npx @insforge/cli docs instructions           Show setup instructions
+  npx @insforge/cli docs db typescript          Show TypeScript database SDK docs
+  npx @insforge/cli docs auth swift             Show Swift auth SDK docs
+  npx @insforge/cli docs storage rest-api       Show REST API storage docs

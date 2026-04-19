@@ -1,7 +1,7 @@
 "use client";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "@/lib/client";
-import { mockLoads, mockDispatchDrivers, mockAlerts as staticAlerts, mockParkingStops } from "@/lib/mock";
+import { insforge } from "@/lib/insforge";
 import type {
   CopilotAlert,
   CostBreakdown,
@@ -20,7 +20,8 @@ import { DemoScenario } from "@/components/copilot/demo-scenario";
 import { useToast } from "@/components/toast";
 
 export default function CopilotPage() {
-  const [loads] = useState<Load[]>(mockLoads);
+  const [loads, setLoads] = useState<Load[]>([]);
+  const [driversCount, setDriversCount] = useState(0);
   const [selectedLoadId, setSelectedLoadId] = useState<string | null>(null);
   const [dispatch, setDispatch] = useState<DispatchRecommendation | null>(null);
   const [parking, setParking] = useState<ParkingRiskResult | null>(null);
@@ -28,6 +29,90 @@ export default function CopilotPage() {
   const [alerts, setAlerts] = useState<CopilotAlert[]>([]);
   const [demoStep, setDemoStep] = useState(0);
   const { show, Toast } = useToast();
+
+  useEffect(() => {
+    // Initial fetch of data
+    const fetchData = async () => {
+      try {
+        const { data: loadsData } = await insforge.database.from("loads").select("*");
+        if (loadsData && loadsData.length > 0) {
+          setLoads(loadsData as any);
+        } else {
+          // Fall back to mock loads if DB not yet seeded
+          setLoads([
+            { id: "PHX-2847", commodity: "Electronics", weight: 42000, rate: 3850, miles: 1065, origin: { lat: 33.4484, lng: -112.074, name: "Phoenix, AZ" }, destination: { lat: 32.7767, lng: -96.797, name: "Dallas, TX" }, shipper: "West Valley Distribution", receiver: "DFW Logistics Hub", status: "pending", notes: "High-value freight — temperature monitoring required" },
+            { id: "TUC-1134", commodity: "Building Materials", weight: 44000, rate: 1420, miles: 450, origin: { lat: 32.2226, lng: -110.9747, name: "Tucson, AZ" }, destination: { lat: 35.0844, lng: -106.6504, name: "Albuquerque, NM" }, shipper: "Southwest Lumber Co.", receiver: "ABQ Construction Supply", status: "assigned" },
+            { id: "LV-0921", commodity: "Consumer Goods", weight: 38000, rate: 1650, miles: 270, origin: { lat: 36.1699, lng: -115.1398, name: "Las Vegas, NV" }, destination: { lat: 34.0522, lng: -118.2437, name: "Los Angeles, CA" }, shipper: "Vegas Wholesale", receiver: "LA Distribution Center", status: "pending" },
+            { id: "PHX-3310", commodity: "Produce (Refrigerated)", weight: 39000, rate: 2800, miles: 515, origin: { lat: 33.4484, lng: -112.074, name: "Phoenix, AZ" }, destination: { lat: 36.7783, lng: -119.4179, name: "Fresno, CA" }, shipper: "Arizona Fresh Farms", receiver: "Central Valley Cold Storage", status: "pending", notes: "Reefer required — 34°F" },
+          ] as any);
+        }
+      } catch {
+        // same mock fallback on connection error
+        setLoads([
+          { id: "PHX-2847", commodity: "Electronics", weight: 42000, rate: 3850, miles: 1065, origin: { lat: 33.4484, lng: -112.074, name: "Phoenix, AZ" }, destination: { lat: 32.7767, lng: -96.797, name: "Dallas, TX" }, shipper: "West Valley Distribution", receiver: "DFW Logistics Hub", status: "pending", notes: "High-value freight — temperature monitoring required" },
+          { id: "TUC-1134", commodity: "Building Materials", weight: 44000, rate: 1420, miles: 450, origin: { lat: 32.2226, lng: -110.9747, name: "Tucson, AZ" }, destination: { lat: 35.0844, lng: -106.6504, name: "Albuquerque, NM" }, shipper: "Southwest Lumber Co.", receiver: "ABQ Construction Supply", status: "assigned" },
+          { id: "LV-0921", commodity: "Consumer Goods", weight: 38000, rate: 1650, miles: 270, origin: { lat: 36.1699, lng: -115.1398, name: "Las Vegas, NV" }, destination: { lat: 34.0522, lng: -118.2437, name: "Los Angeles, CA" }, shipper: "Vegas Wholesale", receiver: "LA Distribution Center", status: "pending" },
+          { id: "PHX-3310", commodity: "Produce (Refrigerated)", weight: 39000, rate: 2800, miles: 515, origin: { lat: 33.4484, lng: -112.074, name: "Phoenix, AZ" }, destination: { lat: 36.7783, lng: -119.4179, name: "Fresno, CA" }, shipper: "Arizona Fresh Farms", receiver: "Central Valley Cold Storage", status: "pending", notes: "Reefer required — 34°F" },
+        ] as any);
+      }
+
+      try {
+        const { count } = await insforge.database.from("dispatch_drivers").select("*", { count: "exact", head: true });
+        setDriversCount(count ?? 5);
+      } catch {
+        setDriversCount(5); // 5 mock drivers
+      }
+
+      try {
+        const { data: alertsData } = await insforge.database.from("copilot_alerts").select("*").order("timestamp", { ascending: false });
+        if (alertsData && alertsData.length > 0) {
+          setAlerts(alertsData.map((a: any) => ({
+            id: a.id, type: a.type, severity: a.severity, title: a.title, message: a.message,
+            actionLabel: a.action_label, loadId: a.load_id, timestamp: a.timestamp, dismissed: a.dismissed
+          })));
+        }
+      } catch {
+        // no alerts yet, that's fine
+      }
+    };
+
+    let interval: NodeJS.Timeout;
+
+    const setupPolling = () => {
+      // Since InsForge realtime API differs from Supabase, we'll use a fast poll 
+      // for the demo to ensure alerts pop up consistently without socket management.
+      interval = setInterval(async () => {
+        try {
+          const { data: alertsData } = await insforge.database
+            .from("copilot_alerts")
+            .select("*")
+            .order("timestamp", { ascending: false });
+            
+          if (alertsData) {
+            setAlerts(alertsData.map((a: any) => ({
+              id: a.id,
+              type: a.type,
+              severity: a.severity,
+              title: a.title,
+              message: a.message,
+              actionLabel: a.action_label,
+              loadId: a.load_id,
+              timestamp: a.timestamp,
+              dismissed: a.dismissed
+            })));
+          }
+        } catch {
+          // silently skip if DB isn't reachable
+        }
+      }, 3000);
+    };
+
+    fetchData().then(setupPolling);
+
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [show]);
 
   const selectedLoad = loads.find((l) => l.id === selectedLoadId) ?? null;
 
@@ -56,80 +141,87 @@ export default function CopilotPage() {
 
   // KPI data derived from current state
   const kpiData = useMemo(() => {
-    const atRisk = demoStep >= 3 ? 1 : 0;
-    const parkingRisk = demoStep >= 3 ? 1 : 0;
+    const atRisk = alerts.filter(a => !a.dismissed && a.severity !== "info").length;
+    const parkingRisk = alerts.filter(a => a.type === "parking_risk" && !a.dismissed).length;
     const avgCpm = cost ? cost.costPerMile : 1.82;
-    const available = mockDispatchDrivers.filter(
-      (d) => d.status !== "IN_TRANSIT" && d.readiness !== "unavailable",
-    ).length;
     return {
       activeLoads: loads.length,
       atRiskLoads: atRisk,
       avgCostPerMile: avgCpm,
       parkingRiskLoads: parkingRisk,
-      availableDrivers: available,
+      availableDrivers: driversCount,
     };
-  }, [loads, demoStep, cost]);
+  }, [loads, cost, alerts, driversCount]);
 
   // Risk load IDs for visual indicators
   const riskLoadIds = useMemo(() => {
     const set = new Set<string>();
-    if (demoStep >= 3) set.add("PHX-2847");
+    alerts.forEach(a => {
+      if (a.loadId) set.add(a.loadId);
+    });
     return set;
-  }, [demoStep]);
+  }, [alerts]);
 
   // ── Demo flow controller ──
   const advanceDemo = useCallback(async () => {
     const next = demoStep + 1;
 
     if (next === 1) {
-      // Step 1: Select load
-      setSelectedLoadId("PHX-2847");
-      show("Selected load PHX-2847 — Phoenix to Dallas");
+      if (loads.length > 0) {
+        setSelectedLoadId(loads[0].id);
+        show("Selected load " + loads[0].id);
+      } else {
+        show("No loads available from DB");
+      }
     }
 
     if (next === 2) {
-      // Step 2: Run dispatch scoring
+      if (!selectedLoadId) return;
       try {
-        const res = await api.dispatchScore("PHX-2847");
+        const res = await fetch("/api/dispatch-score", {
+          method: "POST",
+          body: JSON.stringify({ loadId: selectedLoadId })
+        }).then(res => res.json());
         setDispatch(res);
-        show("AI ranked 4 drivers — Jordan Reyes is the best match");
+        show("AI analyzed and ranked drivers for this load");
       } catch {
         show("Dispatch scoring failed");
       }
     }
 
     if (next === 3) {
-      // Step 3: Simulate detention + run impact
+      if (!selectedLoadId) return;
       try {
-        const [det, prk] = await Promise.all([
-          api.detentionImpact({ loadId: "PHX-2847", delayMinutes: 120 }),
-          api.parkingRisk({ loadId: "PHX-2847", hosRemaining: 7.5, delayMinutes: 120 }),
-        ]);
-        setDetention(det);
-        setParking(prk);
-        // Add alerts for this step
-        setAlerts(staticAlerts.filter((a) => a.loadId === "PHX-2847"));
-        show("⚠ 2-hour detention triggered — recalculating trip plan");
+        // We trigger the autonomous AI dispatcher directly instead of mock detection
+        const triggerRes = await fetch("/api/agent/trigger", {
+          method: "POST",
+          body: JSON.stringify({
+            event: {
+              type: "detention",
+              loadId: selectedLoadId,
+              delayMinutes: 120,
+              description: "Driver stuck at shipper due to backlog"
+            }
+          })
+        });
+        
+        show("⚠ 2-hour detention event fired. Agent analyzing...");
       } catch {
-        show("Impact analysis failed");
+        show("Agent simulation failed");
       }
     }
 
     if (next === 4) {
-      // Step 4: Show full impact (parking backup, customer notification)
-      // Data is already loaded from step 3 — revealing via demoStep
-      setAlerts(staticAlerts);
-      show("Parking risk elevated — CoPilot suggests backup stop at Shamrock, TX");
+      // By now, real time subscription should have popped the alert into the `alerts` state
+      show("AI Agent analyzed hazards and emitted alerts!");
     }
 
     if (next === 5) {
-      // Step 5: Complete — all actions available
-      show("✓ Demo complete — all CoPilot insights active");
+      show("✓ Demo complete — Event-driven AI dispatching successful.");
     }
 
     setDemoStep(next);
-  }, [demoStep, show]);
+  }, [demoStep, show, loads, selectedLoadId]);
 
   const resetDemo = useCallback(() => {
     setDemoStep(0);
@@ -148,14 +240,7 @@ export default function CopilotPage() {
         setSelectedLoadId(alert.loadId);
       }
       if (alert.actionLabel === "View Impact" || alert.actionLabel === "View Parking Plan") {
-        // Already showing the panel via selection
         show(`Viewing ${alert.actionLabel} for ${alert.loadId}`);
-      }
-      if (alert.actionLabel === "Notify Customer") {
-        show("📧 Customer notification sent — DFW Logistics Hub notified of ETA change");
-      }
-      if (alert.actionLabel === "Assign Driver") {
-        show("✓ Driver assignment initiated");
       }
     },
     [show],
@@ -168,19 +253,15 @@ export default function CopilotPage() {
         <IconRail />
         <main className="flex-1 overflow-auto bg-ink-50">
           <div className="mx-auto max-w-[1440px] space-y-4 p-4 lg:p-6">
-            {/* Demo controller */}
             <DemoScenario
               currentStep={demoStep}
               onAdvance={advanceDemo}
               onReset={resetDemo}
             />
 
-            {/* KPI strip */}
             <KpiCards data={kpiData} />
 
-            {/* Main grid */}
             <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
-              {/* Left: Loads + Alerts */}
               <div className="space-y-4 lg:col-span-4">
                 <LoadsTable
                   loads={loads}
@@ -194,7 +275,6 @@ export default function CopilotPage() {
                 />
               </div>
 
-              {/* Right: Dispatch decision panel */}
               <div className="lg:col-span-8">
                 <DispatchPanel
                   load={selectedLoad}
@@ -204,9 +284,9 @@ export default function CopilotPage() {
                   cost={cost}
                   onClose={() => setSelectedLoadId(null)}
                   demoStep={demoStep}
-                  onAssign={() => show("✓ Jordan Reyes assigned to PHX-2847")}
-                  onReserveParking={() => show("✓ Parking reserved at Shamrock Truck Stop")}
-                  onNotifyCustomer={() => show("📧 DFW Logistics Hub notified — updated ETA sent")}
+                  onAssign={() => show("✓ Driver assigned")}
+                  onReserveParking={() => show("✓ Parking reserved")}
+                  onNotifyCustomer={() => show("📧 Customer notified")}
                 />
               </div>
             </div>

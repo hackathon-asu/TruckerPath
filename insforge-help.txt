@@ -1,0 +1,36 @@
+Usage: insforge [options] [command]
+
+InsForge CLI - Command line tool for InsForge platform
+
+Options:
+  -V, --version              output the version number
+  --json                     Output in JSON format
+  --api-url <url>            Override Platform API URL
+  -y, --yes                  Skip confirmation prompts
+  -h, --help                 display help for command
+
+Commands:
+  login [options]            Authenticate with InsForge platform
+  logout                     Log out from InsForge platform
+  whoami                     Show current authenticated user
+  create [options]           Create a new InsForge project
+  current                    Show current CLI context (user, org, project)
+  list                       List all organizations and their projects
+  docs [feature] [language]  Browse InsForge SDK documentation
+  link [options]             Link current directory to an InsForge project
+  db                         Database operations
+  functions                  Manage edge functions
+  storage                    Manage storage
+  deployments                Deploy and manage frontend sites
+  secrets                    Manage secrets
+  logs [options] <source>    Fetch backend container logs (insforge.logs |
+                             postgREST.logs | postgres.logs | function.logs |
+                             function-deploy.logs)
+  metadata                   Show backend metadata (auth, database, buckets,
+                             edge functions, realtime, AI models)
+  diagnose [options]         Backend diagnostics — run with no subcommand for a
+                             full health report
+  compute                    Manage compute services (Docker containers on
+                             Fly.io)
+  schedules                  Manage scheduled tasks (cron jobs)
+  help [command]             display help for command

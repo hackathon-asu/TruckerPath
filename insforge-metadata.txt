@@ -1,0 +1,51 @@
+
+  Auth
+    OAuth Providers:   github, google
+    Email Verification: Yes
+    Password Policy:
+      Min Length: 6, requireLowercase: false, requireNumber: false, requireSpecialChar: false, requireUppercase: false
+    Verify Email Method: code
+    Reset Password Method: code
+
+  Database
+    Size: 9.61 MB
+[90m┌──────────────────[39m[90m┬─────────┐[39m
+[90m│[39m[36m Table            [39m[90m│[39m[36m Records [39m[90m│[39m
+[90m├──────────────────[39m[90m┼─────────┤[39m
+[90m│[39m copilot_alerts   [90m│[39m 0       [90m│[39m
+[90m├──────────────────[39m[90m┼─────────┤[39m
+[90m│[39m detention_events [90m│[39m 0       [90m│[39m
+[90m├──────────────────[39m[90m┼─────────┤[39m
+[90m│[39m dispatch_drivers [90m│[39m 5       [90m│[39m
+[90m├──────────────────[39m[90m┼─────────┤[39m
+[90m│[39m loads            [90m│[39m 4       [90m│[39m
+[90m├──────────────────[39m[90m┼─────────┤[39m
+[90m│[39m parking_stops    [90m│[39m 6       [90m│[39m
+[90m└──────────────────[39m[90m┴─────────┘[39m
+
+  Storage
+    Size: 0.0 KB
+    No buckets.
+
+  Functions
+    No functions deployed.
+
+  AI Models
+[90m┌───────────────────────────────────[39m[90m┬─────────────[39m[90m┬─────────────┐[39m
+[90m│[39m[36m Model                             [39m[90m│[39m[36m Input       [39m[90m│[39m[36m Output      [39m[90m│[39m
+[90m├───────────────────────────────────[39m[90m┼─────────────[39m[90m┼─────────────┤[39m
+[90m│[39m deepseek/deepseek-v3.2            [90m│[39m text, image [90m│[39m text        [90m│[39m
+[90m├───────────────────────────────────[39m[90m┼─────────────[39m[90m┼─────────────┤[39m
+[90m│[39m minimax/minimax-m2.1              [90m│[39m text, image [90m│[39m text        [90m│[39m
+[90m├───────────────────────────────────[39m[90m┼─────────────[39m[90m┼─────────────┤[39m
+[90m│[39m x-ai/grok-4.1-fast                [90m│[39m text, image [90m│[39m text        [90m│[39m
+[90m├───────────────────────────────────[39m[90m┼─────────────[39m[90m┼─────────────┤[39m
+[90m│[39m anthropic/claude-sonnet-4.5       [90m│[39m text, image [90m│[39m text        [90m│[39m
+[90m├───────────────────────────────────[39m[90m┼─────────────[39m[90m┼─────────────┤[39m
+[90m│[39m openai/gpt-4o-mini                [90m│[39m text, image [90m│[39m text        [90m│[39m
+[90m├───────────────────────────────────[39m[90m┼─────────────[39m[90m┼─────────────┤[39m
+[90m│[39m google/gemini-3-pro-image-preview [90m│[39m text, image [90m│[39m text, image [90m│[39m
+[90m└───────────────────────────────────[39m[90m┴─────────────[39m[90m┴─────────────┘[39m
+
+  Version: 1.0.0
+
