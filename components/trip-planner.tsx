@@ -157,11 +157,11 @@ export function TripPlanner({
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
     if (over && active.id !== over.id) {
-      setStops((items) => {
-        const oldIndex = items.findIndex((i) => i.id === active.id);
-        const newIndex = items.findIndex((i) => i.id === over.id);
-        return arrayMove(items, oldIndex, newIndex);
-      });
+      const oldIndex = stops.findIndex((i) => i.id === active.id);
+      const newIndex = stops.findIndex((i) => i.id === over.id);
+      if (oldIndex !== -1 && newIndex !== -1) {
+        setStops(arrayMove(stops, oldIndex, newIndex));
+      }
     }
   };
 
