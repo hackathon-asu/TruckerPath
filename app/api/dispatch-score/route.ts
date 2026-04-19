@@ -6,7 +6,7 @@ import { mapDriverRow, mapLoadRow } from "@/lib/copilot-data";
 import { scoreDriversForLoad } from "@/lib/dispatch-engine";
 import { GEMINI_MODEL, hasGeminiConfig } from "@/lib/gemini";
 import { hasInsforgeConfig, insforge } from "@/lib/insforge";
-import { mockDispatchDrivers, mockLoads } from "@/lib/mock";
+import { createDemoDispatcherSnapshot } from "@/lib/reports-demo";
 import type { DispatchDriver, Load } from "@/lib/types";
 
 let geminiCooldownUntil = 0;
@@ -49,6 +49,57 @@ function summarizeAiFailure(error: unknown): string {
 }
 
 async function resolveScenario(loadId: string): Promise<{ load: Load; drivers: DispatchDriver[]; source: string } | Response> {
+  const demoSnapshot = createDemoDispatcherSnapshot();
+  const demoLoad = demoSnapshot.loads.find((item) => item.id === loadId);
+  const demoDrivers: DispatchDriver[] = demoSnapshot.drivers.map((driver, index) => ({
+    driverId: 2000 + index,
+    firstName: driver.firstName,
+    lastName: driver.lastName,
+    phone: driver.profile.phone,
+    email: driver.profile.email,
+    terminal: driver.terminal,
+    currentLat: driver.currentLat,
+    currentLng: driver.currentLng,
+    currentCity: driver.currentCity,
+    hosRemaining: driver.hosRemainingHours,
+    hosDriveRemaining: driver.hosRemainingHours,
+    status: driver.status === "available" ? "AVAILABLE" : driver.status === "active" ? "IN_TRANSIT" : "INACTIVE",
+    readiness: driver.status === "available" ? "immediate" : driver.status === "active" ? "unavailable" : "1hr",
+    truckType: driver.truckType,
+    costPerMile: Number((1.55 + (100 - driver.profitabilityScore) * 0.01).toFixed(2)),
+    maintenanceScore: driver.maintenanceScore,
+    csaScore: driver.csaScore,
+    profitabilityScore: driver.profitabilityScore,
+    currentFuelPercent: driver.currentFuelPercent,
+    mpgLoaded: driver.mpgLoaded,
+    mpgEmpty: driver.mpgEmpty,
+    currentTripId: driver.currentTripId,
+    breakdownStatus: driver.breakdownStatus,
+    repairEtaHours: driver.repairEtaHours,
+    readinessExplanation: driver.profile.overview.readyExplanation,
+  }));
+  const loadFromReports: Load | null = demoLoad
+    ? {
+        id: demoLoad.id,
+        origin: { lat: 32.7767, lng: -96.797, name: demoLoad.origin },
+        destination: { lat: 29.7604, lng: -95.3698, name: demoLoad.destination },
+        commodity: demoLoad.customer,
+        equipment: demoLoad.equipment,
+        weight: 42000,
+        rate: demoLoad.rate,
+        miles: demoLoad.miles,
+        pickupWindow: { start: new Date().toISOString(), end: new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString() },
+        deliveryWindow: { start: new Date().toISOString(), end: new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString() },
+        shipper: demoLoad.customer,
+        receiver: demoLoad.customer,
+        status: demoLoad.assignedDriverId ? "assigned" : "pending",
+        urgency: demoLoad.urgency,
+        docsRequired: demoLoad.docsRequired,
+        customer: demoLoad.customer,
+        notes: demoLoad.aiAssignmentRecommendation,
+      }
+    : null;
+
   if (hasInsforgeConfig && insforge) {
     const client = insforge;
     const { data: loadRow, error: loadError } = await client.database
@@ -59,6 +110,13 @@ async function resolveScenario(loadId: string): Promise<{ load: Load; drivers: D
 
     if (loadError) {
       return NextResponse.json({ error: loadError.message }, { status: 500 });
+    }
+    if (!loadRow && loadFromReports) {
+      return {
+        load: loadFromReports,
+        drivers: demoDrivers,
+        source: "demo",
+      };
     }
     if (!loadRow) {
       return NextResponse.json({ error: `Load '${loadId}' not found in InsForge` }, { status: 404 });
@@ -85,14 +143,13 @@ async function resolveScenario(loadId: string): Promise<{ load: Load; drivers: D
     };
   }
 
-  const load = mockLoads.find((item) => item.id === loadId);
-  if (!load) {
+  if (!loadFromReports) {
     return NextResponse.json({ error: `Load '${loadId}' was not found in demo data` }, { status: 404 });
   }
 
   return {
-    load,
-    drivers: mockDispatchDrivers,
+    load: loadFromReports,
+    drivers: demoDrivers,
     source: "demo",
   };
 }

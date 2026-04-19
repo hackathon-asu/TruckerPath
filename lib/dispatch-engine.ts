@@ -1,87 +1,88 @@
-import type { Load, DispatchDriver, DispatchRecommendation, RankedDriver } from "./types";
+import type {
+  DispatchDriver,
+  DispatchRecommendation,
+  DriverReadinessBreakdown,
+  Load,
+  RankedDriver,
+} from "./types";
 
-// Haversine distance in miles between two lat/lng points
+const AVG_SPEED_MPH = 55;
+const DEADHEAD_COST_PER_MILE = 1.5;
+
 function haversine(lat1: number, lng1: number, lat2: number, lng2: number): number {
   const R = 3958.8;
-  const rad = (d: number) => (d * Math.PI) / 180;
-  const dLat = rad(lat2 - lat1);
-  const dLon = rad(lng2 - lng1);
+  const toRad = (value: number) => (value * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
   const a =
     Math.sin(dLat / 2) ** 2 +
-    Math.cos(rad(lat1)) * Math.cos(rad(lat2)) * Math.sin(dLon / 2) ** 2;
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
   return 2 * R * Math.asin(Math.sqrt(a));
 }
 
-const AVG_SPEED_MPH = 55;
-const DEADHEAD_COST_PER_MILE = 1.50;
+function clamp(value: number, min = 0, max = 100) {
+  return Math.min(max, Math.max(min, value));
+}
 
-/**
- * Score and rank available drivers for a given load.
- * All heuristics are transparent and deterministic.
- */
+function scoreComponent(
+  key: DriverReadinessBreakdown["key"],
+  label: string,
+  weight: number,
+  rawScore: number,
+  explanation: string,
+): DriverReadinessBreakdown {
+  return {
+    key,
+    label,
+    weight,
+    rawScore: clamp(rawScore),
+    weightedScore: Number(((clamp(rawScore) * weight) / 100).toFixed(2)),
+    explanation,
+  };
+}
+
 export function scoreDriversForLoad(
   load: Load,
   drivers: DispatchDriver[],
+  routeContext?: { miles?: number; minutes?: number; tolls?: number },
 ): DispatchRecommendation {
-  const tripHours = load.miles / AVG_SPEED_MPH;
-
-  const ranked: RankedDriver[] = drivers
-    .filter((d) => d.status !== "IN_TRANSIT" && d.readiness !== "unavailable")
+  const routeMiles = routeContext?.miles ?? load.miles;
+  const routeHours = (routeContext?.minutes ?? load.miles / AVG_SPEED_MPH * 60) / 60;
+  const rankedDrivers: RankedDriver[] = drivers
+    .filter((driver) => driver.status !== "IN_TRANSIT" && driver.breakdownStatus !== "confirmed")
     .map((driver) => {
-      const deadheadMiles = haversine(
-        driver.currentLat,
-        driver.currentLng,
-        load.origin.lat,
-        load.origin.lng,
-      );
+      const deadheadMiles = haversine(driver.currentLat, driver.currentLng, load.origin.lat, load.origin.lng);
       const deadheadMinutes = (deadheadMiles / AVG_SPEED_MPH) * 60;
-      const totalDriveHours = deadheadMiles / AVG_SPEED_MPH + tripHours;
-      const tripFeasible = driver.hosDriveRemaining >= Math.min(totalDriveHours, 11);
-      const hosAfterTrip = Math.max(0, driver.hosDriveRemaining - totalDriveHours);
-      const estimatedCost =
-        deadheadMiles * DEADHEAD_COST_PER_MILE + load.miles * driver.costPerMile;
+      const totalTripHours = routeHours + deadheadMiles / AVG_SPEED_MPH;
+      const tripFeasible = driver.hosDriveRemaining >= totalTripHours * 0.85;
+      const hosAfterTrip = Number(Math.max(0, driver.hosDriveRemaining - totalTripHours).toFixed(1));
+      const equipmentFit = driver.truckType.toLowerCase().includes((load.equipment ?? "").split(" ")[0]?.toLowerCase?.() ?? "")
+        ? 100
+        : load.equipment
+          ? 72
+          : 88;
+      const maintenanceScore = driver.maintenanceScore ?? 78;
+      const fuelEconomics = clamp(((driver.mpgLoaded ?? 6.2) / 7.5) * 100 + ((driver.currentFuelPercent ?? 60) > 30 ? 10 : -15));
+      const parkingViability = clamp(55 + hosAfterTrip * 6);
+      const tomorrowImpact = clamp(driver.downstreamDependencyIds?.length ? 48 : 86);
+      const strandedRisk = clamp(deadheadMiles < 50 ? 92 : 70 - deadheadMiles * 0.06);
 
-      // ── Scoring factors (each 0–100) ──
-      // Deadhead: closer is better. 0 mi = 100, 500+ mi = 0
-      const deadheadScore = Math.max(0, 100 - (deadheadMiles / 500) * 100);
+      const components = [
+        scoreComponent("deadhead", "Deadhead miles/time", 20, 100 - deadheadMiles / 4, `${Math.round(deadheadMiles)} mi to pickup.`),
+        scoreComponent("hos", "HOS remaining / feasibility", 20, tripFeasible ? 65 + hosAfterTrip * 8 : 26, `${driver.hosDriveRemaining.toFixed(1)}h drive time remaining.`),
+        scoreComponent("trip_time", "Total route/trip time", 10, 100 - totalTripHours * 5.5, `${totalTripHours.toFixed(1)}h total with deadhead.`),
+        scoreComponent("equipment", "Equipment compatibility", 10, equipmentFit, driver.truckType),
+        scoreComponent("maintenance", "Maintenance / ELD confidence", 10, maintenanceScore - (driver.eldErrorCode ? 18 : 0), driver.eldErrorCode ? `ELD issue ${driver.eldErrorCode}.` : "Healthy truck and ELD."),
+        scoreComponent("tomorrow_impact", "Tomorrow-load downstream impact", 10, tomorrowImpact, driver.downstreamDependencyIds?.length ? "Tomorrow commitments create a tradeoff." : "No hard downstream conflict."),
+        scoreComponent("stranded_risk", "Stranded-driver prevention", 10, strandedRisk, "Keeps the asset useful after delivery."),
+        scoreComponent("fuel_plan", "Fuel plan / route economics", 5, fuelEconomics, `${driver.currentFuelPercent ?? 0}% fuel and ${(driver.mpgLoaded ?? 0).toFixed(1)} MPG loaded.`),
+        scoreComponent("parking_viability", "Parking / HOS stop viability", 5, parkingViability, `${hosAfterTrip.toFixed(1)}h projected after trip.`),
+      ];
 
-      // HOS: more remaining time = better
-      const hosScore = Math.min(100, (driver.hosDriveRemaining / 11) * 100);
-
-      // Readiness: immediate=100, 30min=75, 1hr=50
-      const readinessScore =
-        driver.readiness === "immediate" ? 100 : driver.readiness === "30min" ? 75 : 50;
-
-      // Cost: lower CPM is better, normalized around $2/mi
-      const costScore = Math.max(0, Math.min(100, (2.0 - driver.costPerMile) * 200 + 50));
-
-      // Trip feasibility is critical
-      const feasibilityBonus = tripFeasible ? 15 : -40;
-
-      // Weighted composite score
-      const rawScore =
-        deadheadScore * 0.30 +
-        hosScore * 0.25 +
-        readinessScore * 0.20 +
-        costScore * 0.15 +
-        feasibilityBonus;
-
-      const score = Math.max(0, Math.min(100, Math.round(rawScore)));
-
-      // Build reasoning
-      const reasons: string[] = [];
-      if (deadheadMiles < 30) reasons.push(`Very close (${deadheadMiles.toFixed(0)} mi deadhead)`);
-      else if (deadheadMiles < 100) reasons.push(`${deadheadMiles.toFixed(0)} mi deadhead`);
-      else reasons.push(`Far (${deadheadMiles.toFixed(0)} mi deadhead)`);
-      if (!tripFeasible) reasons.push("⚠ HOS insufficient for full trip");
-      if (driver.readiness === "immediate") reasons.push("Ready now");
-      if (driver.costPerMile < 1.80) reasons.push("Low cost per mile");
-
-      const now = Date.now();
-      const pickupArrival = new Date(now + deadheadMinutes * 60_000);
-      const deliveryArrival = new Date(
-        pickupArrival.getTime() + tripHours * 3600_000 + 60 * 60_000, // +1h for loading
-      );
+      const score = Number(components.reduce((sum, part) => sum + part.weightedScore, 0).toFixed(1));
+      const estimatedCost = Math.round(deadheadMiles * DEADHEAD_COST_PER_MILE + routeMiles * driver.costPerMile + (routeContext?.tolls ?? 0));
+      const pickupArrival = new Date(Date.now() + deadheadMinutes * 60_000);
+      const deliveryArrival = new Date(pickupArrival.getTime() + routeHours * 60 * 60_000);
 
       return {
         driver,
@@ -91,26 +92,27 @@ export function scoreDriversForLoad(
         etaToPickup: pickupArrival.toISOString(),
         etaToDelivery: deliveryArrival.toISOString(),
         tripFeasible,
-        hosAfterTrip: Math.round(hosAfterTrip * 10) / 10,
-        estimatedCost: Math.round(estimatedCost),
-        reasoning: reasons.join(" · "),
+        hosAfterTrip,
+        estimatedCost,
+        reasoning: components
+          .sort((left, right) => right.weightedScore - left.weightedScore)
+          .slice(0, 3)
+          .map((item) => item.explanation)
+          .join(" • "),
+        components,
       };
     })
-    .sort((a, b) => b.score - a.score);
+    .sort((left, right) => right.score - left.score);
 
-  const best = ranked[0] ?? null;
-  const confidenceScore = best ? best.score : 0;
-
-  let explanation = "No available drivers found.";
-  if (best) {
-    explanation = `${best.driver.firstName} ${best.driver.lastName} is the best match (score ${best.score}/100). ${best.deadheadMiles} mi deadhead from ${best.driver.currentCity}, ${best.driver.hosDriveRemaining}h HOS remaining, $${best.driver.costPerMile}/mi.`;
-  }
-
+  const bestDriver = rankedDrivers[0] ?? null;
   return {
     loadId: load.id,
-    rankedDrivers: ranked,
-    bestDriver: best,
-    confidenceScore,
-    explanation,
+    rankedDrivers,
+    bestDriver,
+    confidenceScore: bestDriver ? clamp(bestDriver.score + 4) : 0,
+    explanation: bestDriver
+      ? `${bestDriver.driver.firstName} ${bestDriver.driver.lastName} leads the board with ${bestDriver.score}/100 by balancing deadhead, HOS feasibility, equipment fit, and downstream protection.`
+      : "No available drivers cleared the deterministic readiness gates.",
+    generatedAt: new Date().toISOString(),
   };
 }

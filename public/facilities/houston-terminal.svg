@@ -1,0 +1,16 @@
+<svg width="800" height="480" viewBox="0 0 800 480" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="800" height="480" fill="#EEF4FF"/>
+  <rect x="52" y="70" width="696" height="340" rx="24" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="4"/>
+  <rect x="110" y="130" width="230" height="200" rx="18" fill="#E0E7FF"/>
+  <rect x="388" y="112" width="288" height="156" rx="18" fill="#DBEAFE"/>
+  <rect x="388" y="294" width="288" height="60" rx="16" fill="#DCFCE7"/>
+  <path d="M24 246H110" stroke="#2563EB" stroke-width="18" stroke-linecap="round"/>
+  <path d="M110 246H215" stroke="#2563EB" stroke-width="18" stroke-dasharray="14 18" stroke-linecap="round"/>
+  <path d="M260 330V412" stroke="#16A34A" stroke-width="14" stroke-linecap="round"/>
+  <path d="M330 330V412" stroke="#16A34A" stroke-width="14" stroke-linecap="round"/>
+  <circle cx="83" cy="246" r="24" fill="#2563EB"/>
+  <text x="65" y="252" fill="white" font-family="Arial" font-size="18" font-weight="700">IN</text>
+  <text x="418" y="380" fill="#0F172A" font-family="Arial" font-size="28" font-weight="700">South staging lot</text>
+  <text x="134" y="242" fill="#0F172A" font-family="Arial" font-size="28" font-weight="700">Truck gate east approach</text>
+  <text x="432" y="178" fill="#1E3A8A" font-family="Arial" font-size="28" font-weight="700">Office / avoid entrance</text>
+</svg>
