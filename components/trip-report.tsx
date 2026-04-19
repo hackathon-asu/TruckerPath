@@ -1,9 +1,12 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, Sparkles, X } from "lucide-react";
+import { ArrowLeft, CheckCircle2, Gauge, Shield, Sparkles, Truck, X } from "lucide-react";
 import { api } from "@/lib/client";
 import { formatDuration } from "@/lib/format";
+import { cn } from "@/lib/cn";
 import type { RoutingProfile, StopPoint } from "@/lib/types";
+import type { PostTripAnalysis } from "@/lib/eld-engine";
+import { formatDutyStatus } from "@/lib/eld-engine";
 
 interface Props {
   stops: StopPoint[];
@@ -13,6 +16,14 @@ interface Props {
   onClose: () => void;
 }
 
+const ELD_DRIVERS = [
+  { id: "DRV001", name: "Jordan Reyes" },
+  { id: "DRV002", name: "Priya Shah" },
+  { id: "DRV003", name: "Alex Novak" },
+  { id: "DRV004", name: "Mia Okonkwo" },
+  { id: "DRV005", name: "Sam Chen" },
+];
+
 export function TripReport({ stops, miles, minutes, profile, onClose }: Props) {
   const [mpg, setMpg] = useState(6);
   const [fuelPrice, setFuelPrice] = useState(3.85);
@@ -20,6 +31,9 @@ export function TripReport({ stops, miles, minutes, profile, onClose }: Props) {
   const [otherCosts, setOtherCosts] = useState(0);
   const [insights, setInsights] = useState<string[]>([]);
   const [loadingInsights, setLoadingInsights] = useState(true);
+  const [eldDriverId, setEldDriverId] = useState("DRV001");
+  const [postTrip, setPostTrip] = useState<PostTripAnalysis | null>(null);
+  const [loadingEld, setLoadingEld] = useState(false);
 
   const gallons = useMemo(() => (mpg > 0 ? miles / mpg : 0), [miles, mpg]);
   const fuelCost = gallons * fuelPrice;
@@ -35,10 +49,19 @@ export function TripReport({ stops, miles, minutes, profile, onClose }: Props) {
         if (alive) setInsights(r.insights);
       })
       .finally(() => alive && setLoadingInsights(false));
-    return () => {
-      alive = false;
-    };
+    return () => { alive = false; };
   }, [miles, minutes, stops, profile]);
+
+  // Fetch ELD post-trip analysis when driver changes
+  useEffect(() => {
+    let alive = true;
+    setLoadingEld(true);
+    fetch(`/api/eld-summary?driverId=${eldDriverId}&mode=post-trip`)
+      .then((r) => r.json())
+      .then((data: PostTripAnalysis) => { if (alive) setPostTrip(data); })
+      .finally(() => alive && setLoadingEld(false));
+    return () => { alive = false; };
+  }, [eldDriverId]);
 
   return (
     <div
@@ -146,6 +169,118 @@ export function TripReport({ stops, miles, minutes, profile, onClose }: Props) {
             </ul>
           )}
         </section>
+
+        {/* ── Post-Trip ELD Analysis ── */}
+        <section className="rounded-md border border-ink-200 bg-white overflow-hidden">
+          <div className="flex items-center justify-between border-b border-ink-200 px-4 py-2.5">
+            <div className="flex items-center gap-2 text-xs font-semibold text-ink-700">
+              <Truck className="h-3.5 w-3.5 text-brand-500" />
+              Post-Trip ELD Analysis
+            </div>
+            <select
+              value={eldDriverId}
+              onChange={(e) => setEldDriverId(e.target.value)}
+              className="rounded border border-ink-200 bg-ink-50 px-2 py-1 text-[11px] text-ink-700"
+            >
+              {ELD_DRIVERS.map((d) => (
+                <option key={d.id} value={d.id}>{d.name}</option>
+              ))}
+            </select>
+          </div>
+
+          {loadingEld && (
+            <div className="p-4 text-xs text-ink-500">Loading ELD data…</div>
+          )}
+
+          {!loadingEld && postTrip && (
+            <div className="p-4 space-y-3">
+              {/* Compliance score */}
+              <div className="flex items-center justify-between rounded-lg border border-ink-200 p-3">
+                <div>
+                  <div className="text-[10px] font-semibold uppercase tracking-wider text-ink-500">HOS Compliance Score</div>
+                  <div className={cn(
+                    "mt-0.5 text-2xl font-bold",
+                    postTrip.complianceScore === 100 ? "text-emerald-600"
+                      : postTrip.complianceScore >= 80 ? "text-amber-600" : "text-rose-600",
+                  )}>
+                    {postTrip.complianceScore}/100
+                  </div>
+                </div>
+                {postTrip.complianceScore === 100 ? (
+                  <CheckCircle2 className="h-8 w-8 text-emerald-500" />
+                ) : (
+                  <Shield className="h-8 w-8 text-amber-500" />
+                )}
+              </div>
+
+              {/* Stats grid */}
+              <div className="grid grid-cols-2 gap-2 text-[10px]">
+                <Stat label="Drive Time" value={`${postTrip.totalDriveH.toFixed(1)}h`} />
+                <Stat label="On Duty" value={`${postTrip.totalOnDutyH.toFixed(1)}h`} />
+                <Stat label="Miles Driven" value={`${postTrip.totalMilesDriven} mi`} />
+                <Stat label="Avg Speed" value={`${postTrip.averageSpeedMph} mph`} />
+                <Stat label="Breaks Taken" value={String(postTrip.breaksTaken)} />
+                <Stat label="Vehicle" value={postTrip.cmvUnit} />
+              </div>
+
+              {/* Violations */}
+              {postTrip.violations.length > 0 ? (
+                <div className="space-y-1.5">
+                  <div className="text-[10px] font-semibold uppercase tracking-wider text-rose-600">Violations</div>
+                  {postTrip.violations.map((v, i) => (
+                    <div key={i} className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+                      <div className="font-semibold">{v.type}</div>
+                      <div className="text-[10px] text-rose-600">{v.detail}</div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-700">
+                  ✓ No HOS violations recorded for this duty cycle
+                </div>
+              )}
+
+              {/* ELD event log */}
+              <div>
+                <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-ink-400">ELD Event Log</div>
+                <div className="overflow-hidden rounded-md border border-ink-200">
+                  <table className="w-full text-[10px]">
+                    <thead className="bg-ink-50 text-ink-500">
+                      <tr>
+                        <th className="p-2 text-left font-medium">Status</th>
+                        <th className="p-2 text-right font-medium">Duration</th>
+                        <th className="p-2 text-left font-medium">Location</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {postTrip.segments.map((seg, i) => (
+                        <tr key={i} className="border-t border-ink-100">
+                          <td className="p-2">
+                            <span className={cn(
+                              "rounded-full px-1.5 py-0.5 font-semibold uppercase",
+                              seg.status === "DRIVING" ? "bg-brand-100 text-brand-700"
+                                : seg.status === "ON_DUTY" ? "bg-emerald-100 text-emerald-700"
+                                : seg.status === "SLEEPER" ? "bg-purple-100 text-purple-700"
+                                : "bg-ink-100 text-ink-500",
+                            )}>
+                              {formatDutyStatus(seg.status)}
+                            </span>
+                          </td>
+                          <td className="p-2 text-right font-medium text-ink-700">
+                            {seg.durationM >= 60
+                              ? `${(seg.durationM / 60).toFixed(1)}h`
+                              : `${seg.durationM}m`}
+                          </td>
+                          <td className="p-2 truncate text-ink-500 max-w-[140px]">{seg.location}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
+        </section>
       </div>
     </div>
   );
@@ -159,6 +294,16 @@ function Row({ label, value }: { label: string; value: string }) {
     </div>
   );
 }
+
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-md border border-ink-200 bg-ink-50 p-2">
+      <div className="text-ink-400">{label}</div>
+      <div className="mt-0.5 font-semibold text-ink-800">{value}</div>
+    </div>
+  );
+}
+
 
 function LabeledInput({
   label,

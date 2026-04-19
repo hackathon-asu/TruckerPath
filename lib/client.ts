@@ -71,5 +71,11 @@ export const api = {
     }),
   copilotAlerts: () =>
     jsonFetch<{ alerts: CopilotAlert[] }>("/api/copilot-alerts"),
+  eldSummary: (params?: { driverId?: string; mode?: "summary" | "post-trip" }) => {
+    const qs = new URLSearchParams();
+    if (params?.driverId) qs.set("driverId", params.driverId);
+    if (params?.mode) qs.set("mode", params.mode);
+    return jsonFetch<unknown>(`/api/eld-summary?${qs.toString()}`);
+  },
 };
 

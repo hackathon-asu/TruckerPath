@@ -205,87 +205,96 @@ export const mockLoads: Load[] = [
   },
 ];
 
+// ─── Dispatch Drivers (ELD-sourced) ─────────────────────────────────
+// HOS values derived from ELD shift summaries (8h anchor, FMCSA 11/14h rules)
+// driverId cross-reference: 1001=DRV001 (Jordan), 1002=DRV003 (Alex),
+//   1003=DRV004 (Mia), 1004=DRV005 (Sam), 1005=DRV002 (Priya)
 export const mockDispatchDrivers: DispatchDriver[] = [
   {
+    // DRV001 — Jordan Reyes — IN_TRANSIT (driving 7.5h in shift)
     driverId: 1001,
     firstName: "Jordan",
     lastName: "Reyes",
     phone: "602-555-0142",
     email: "jordan.reyes@fleet.example",
     terminal: "Phoenix Hub",
-    currentLat: 33.39,
-    currentLng: -111.83,
-    currentCity: "Tempe, AZ",
-    hosRemaining: 9.5,
-    hosDriveRemaining: 8.5,
-    status: "AVAILABLE",
-    readiness: "immediate",
+    currentLat: 32.89,   // Casa Grande, AZ (position along I-10)
+    currentLng: -111.76,
+    currentCity: "Casa Grande, AZ",
+    hosRemaining: 5.5,   // 14h window - 8.5h elapsed
+    hosDriveRemaining: 3.5,  // 11h - 7.5h driving
+    status: "IN_TRANSIT",
+    readiness: "unavailable",
     truckType: "Dry Van 53ft",
     costPerMile: 1.85,
   },
   {
+    // DRV003 — Alex Novak — AVAILABLE (on duty but not driving)
     driverId: 1002,
     firstName: "Alex",
     lastName: "Novak",
     phone: "480-555-0199",
     email: "alex.novak@fleet.example",
     terminal: "Phoenix Hub",
-    currentLat: 33.42,
-    currentLng: -112.02,
-    currentCity: "Phoenix, AZ",
-    hosRemaining: 10.5,
-    hosDriveRemaining: 10.0,
+    currentLat: 33.425,  // Tempe, AZ
+    currentLng: -111.94,
+    currentCity: "Tempe, AZ",
+    hosRemaining: 6.0,   // 14h - 8h on duty
+    hosDriveRemaining: 11.0, // No driving yet this shift
     status: "AVAILABLE",
-    readiness: "30min",
+    readiness: "immediate",
     truckType: "Dry Van 53ft",
     costPerMile: 1.72,
   },
   {
+    // DRV004 — Mia Okonkwo — AVAILABLE (on duty, Las Vegas)
     driverId: 1003,
     firstName: "Mia",
     lastName: "Okonkwo",
     phone: "702-555-0108",
     email: "mia.o@fleet.example",
     terminal: "Las Vegas Yard",
-    currentLat: 36.17,
-    currentLng: -115.14,
+    currentLat: 36.1699, // Las Vegas, NV
+    currentLng: -115.1398,
     currentCity: "Las Vegas, NV",
-    hosRemaining: 11.0,
-    hosDriveRemaining: 11.0,
+    hosRemaining: 6.0,   // 14h - 8h on duty window
+    hosDriveRemaining: 11.0, // No driving yet this shift
     status: "AVAILABLE",
     readiness: "immediate",
     truckType: "Flatbed 48ft",
     costPerMile: 1.95,
   },
   {
+    // DRV005 — Sam Chen — INACTIVE (off duty 2d ago, fully rested)
     driverId: 1004,
     firstName: "Sam",
     lastName: "Chen",
     phone: "520-555-0166",
     email: "sam.chen@fleet.example",
     terminal: "Tucson Depot",
-    currentLat: 32.22,
-    currentLng: -110.97,
+    currentLat: 32.2217, // Tucson, AZ
+    currentLng: -110.9265,
     currentCity: "Tucson, AZ",
-    hosRemaining: 5.0,
-    hosDriveRemaining: 4.5,
-    status: "AVAILABLE",
+    hosRemaining: 14.0,  // fully rested
+    hosDriveRemaining: 11.0,
+    status: "AVAILABLE", // available after full rest
     readiness: "1hr",
     truckType: "Dry Van 53ft",
     costPerMile: 1.68,
   },
   {
+    // DRV002 — Priya Shah — IN_TRANSIT (driving from Cedar City, UT)
     driverId: 1005,
     firstName: "Priya",
     lastName: "Shah",
     phone: "435-555-0121",
     email: "priya.shah@fleet.example",
     terminal: "Utah Steel",
-    currentLat: 37.68,
-    currentLng: -113.06,
+    currentLat: 37.6775, // Cedar City, UT
+    currentLng: -113.0619,
     currentCity: "Cedar City, UT",
-    hosRemaining: 7.0,
-    hosDriveRemaining: 6.5,
+    hosRemaining: 6.0,   // 14h - 8h on duty
+    hosDriveRemaining: 4.0,  // 11h - 7h driving
     status: "IN_TRANSIT",
     readiness: "unavailable",
     truckType: "Dry Van 53ft",
