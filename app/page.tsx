@@ -4,11 +4,18 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { cn } from "@/lib/cn";
 import { api } from "@/lib/client";
 import type { MapType } from "@/components/fleet-map";
+import type { RouteAlt } from "@/lib/route";
+import type { RoutePoi } from "@/lib/poi-along-route";
 import type { RoutingProfile, StopPoint } from "@/lib/types";
 import { IconRail } from "@/components/icon-rail";
 import { TopHeader } from "@/components/top-header";
 import { TripPlanner } from "@/components/trip-planner";
 import { TripReport } from "@/components/trip-report";
+import { DirectionsPanel } from "@/components/directions-panel";
+import { PoisPanel } from "@/components/pois-panel";
+import { FuelPlanPanel } from "@/components/fuel-plan-panel";
+import { WeatherPanel } from "@/components/weather-panel";
+import { DocumentsPanel } from "@/components/documents-panel";
 import { DriversPanel } from "@/components/drivers-panel";
 import { MapLayerPopover } from "@/components/map-layer-popover";
 import { RoutingProfileDialog } from "@/components/routing-profile-dialog";
@@ -22,11 +29,14 @@ type LeftTab = "search" | "drivers";
 export default function HomePage() {
   const [tab, setTab] = useState<LeftTab>("search");
   const [stops, setStops] = useState<StopPoint[]>([]);
-  const [route, setRoute] = useState<{ miles: number; minutes: number; polyline: [number, number][] } | null>(null);
+  const [routes, setRoutes] = useState<RouteAlt[]>([]);
+  const [activeRouteId, setActiveRouteId] = useState<string | null>(null);
+  const activeRoute = routes.find((r) => r.id === activeRouteId) ?? routes[0] ?? null;
   const [profiles, setProfiles] = useState<RoutingProfile[]>([]);
   const [profile, setProfile] = useState<RoutingProfile | undefined>();
   const [profileDialog, setProfileDialog] = useState(false);
-  const [reportOpen, setReportOpen] = useState(false);
+  const [drawer, setDrawer] = useState<null | "report" | "directions" | "pois" | "fuel" | "weather" | "documents">(null);
+  const [overlayPois, setOverlayPois] = useState<RoutePoi[]>([]);
   const [cmdOpen, setCmdOpen] = useState(false);
   const [mapType, setMapType] = useState<MapType>("road");
   const [weather, setWeather] = useState(false);
@@ -52,7 +62,7 @@ export default function HomePage() {
       if (e.key === "Escape") {
         setCmdOpen(false);
         setProfileDialog(false);
-        setReportOpen(false);
+        setDrawer(null);
       }
     };
     window.addEventListener("keydown", h);
@@ -93,20 +103,49 @@ export default function HomePage() {
     }
   }, [profile, stops, show]);
 
-  const miles = route?.miles ?? 0;
-  const minutes = route?.minutes ?? 0;
+  const miles = activeRoute?.miles ?? 0;
+  const minutes = activeRoute?.minutes ?? 0;
 
   const leftPanel = useMemo(() => {
-    if (reportOpen && profile && stops.length >= 2) {
+    const hasRoute = activeRoute && stops.length >= 2;
+    if (drawer === "report" && profile && hasRoute) {
       return (
         <TripReport
           stops={stops}
           miles={miles}
           minutes={minutes}
           profile={profile}
-          onClose={() => setReportOpen(false)}
+          onClose={() => setDrawer(null)}
         />
       );
+    }
+    if (drawer === "directions" && hasRoute && activeRoute) {
+      return <DirectionsPanel route={activeRoute} stops={stops} onClose={() => setDrawer(null)} />;
+    }
+    if (drawer === "pois" && hasRoute && activeRoute) {
+      return (
+        <PoisPanel
+          route={activeRoute}
+          onClose={() => setDrawer(null)}
+          onAdd={(s) => setStops([...stops, s])}
+          onPoisChange={setOverlayPois}
+        />
+      );
+    }
+    if (drawer === "fuel" && hasRoute && activeRoute) {
+      return (
+        <FuelPlanPanel
+          route={activeRoute}
+          onClose={() => setDrawer(null)}
+          onApply={(extra) => setStops([...stops, ...extra])}
+        />
+      );
+    }
+    if (drawer === "weather" && hasRoute && activeRoute) {
+      return <WeatherPanel route={activeRoute} onClose={() => setDrawer(null)} />;
+    }
+    if (drawer === "documents") {
+      return <DocumentsPanel onClose={() => setDrawer(null)} />;
     }
     return (
       <div className="flex h-full flex-col" style={{ width: "var(--panel-w)" }}>
@@ -137,9 +176,16 @@ export default function HomePage() {
               setProfile={setProfile}
               stops={stops}
               setStops={setStops}
-              route={route}
-              setRoute={setRoute}
-              onOpenReport={() => setReportOpen(true)}
+              routes={routes}
+              setRoutes={setRoutes}
+              activeRouteId={activeRouteId}
+              setActiveRouteId={setActiveRouteId}
+              onOpenReport={() => setDrawer("report")}
+              onOpenDirections={() => setDrawer("directions")}
+              onOpenPois={() => setDrawer("pois")}
+              onOpenFuel={() => setDrawer("fuel")}
+              onOpenWeather={() => setDrawer("weather")}
+              onOpenDocuments={() => setDrawer("documents")}
               onOpenAddProfile={() => setProfileDialog(true)}
               onSendRoute={sendRoute}
               sending={sending}
@@ -150,7 +196,7 @@ export default function HomePage() {
         </div>
       </div>
     );
-  }, [reportOpen, profile, stops, miles, minutes, tab, profiles, route, sending, sendRoute]);
+  }, [drawer, profile, stops, miles, minutes, tab, profiles, routes, activeRoute, activeRouteId, setActiveRouteId, sending, sendRoute]);
 
   return (
     <div className="flex h-screen flex-col">
@@ -159,7 +205,23 @@ export default function HomePage() {
         <IconRail />
         {leftPanel}
         <div className="relative flex-1 bg-ink-100">
-          <FleetMap stops={stops} polyline={route?.polyline} mapType={mapType} />
+          <FleetMap
+            stops={stops}
+            routes={routes.map((r) => ({
+              id: r.id,
+              polyline: r.polyline,
+              active: r.id === (activeRoute?.id ?? ""),
+            }))}
+            pois={drawer === "pois" ? overlayPois.map((p) => ({
+              id: p.id,
+              latitude: p.latitude,
+              longitude: p.longitude,
+              name: p.name,
+              category: p.category,
+              subtitle: p.pumpPrice != null ? `$${p.pumpPrice.toFixed(3)}/gal` : p.address,
+            })) : undefined}
+            mapType={mapType}
+          />
           <MapLayerPopover
             mapType={mapType}
             onMapType={setMapType}
