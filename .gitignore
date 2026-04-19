@@ -1,0 +1,14 @@
+node_modules
+.next
+out
+.env
+.env.local
+.env.*.local
+next-env.d.ts
+.DS_Store
+
+Api-credentials.json
+*.pem
+tsconfig.tsbuildinfo
+Screenshot*.png
+extra/
