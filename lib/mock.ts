@@ -90,6 +90,13 @@ export const mockProfiles: RoutingProfile[] = [
     axles: 5,
     trailers: 1,
     hazmat: false,
+    avoid_areas: [],
+    avoid_bridges: [],
+    route_policy: {
+      enforce_permitted_network: true,
+      enforce_hazmat_restrictions: true,
+      enforce_clearance_limits: true,
+    },
   },
   {
     id: 6832,
@@ -105,6 +112,13 @@ export const mockProfiles: RoutingProfile[] = [
     axles: 6,
     trailers: 1,
     hazmat: false,
+    avoid_areas: [],
+    avoid_bridges: [],
+    route_policy: {
+      enforce_permitted_network: true,
+      enforce_hazmat_restrictions: true,
+      enforce_clearance_limits: true,
+    },
   },
 ];
 
