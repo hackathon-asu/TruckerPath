@@ -42,10 +42,13 @@ export const api = {
     jsonFetch<{ results: { id: number; name: string; latitude: number; longitude: number }[] }>(
       `/api/geocode?q=${encodeURIComponent(q)}`,
     ),
-  calcRoute: (stops: { latitude: number; longitude: number }[]) =>
+  calcRoute: (params: {
+    stops: { latitude: number; longitude: number }[];
+    profile?: RoutingProfile;
+  }) =>
     jsonFetch<{ routes: RouteAlt[]; fallback?: boolean }>("/api/route-calc", {
       method: "POST",
-      body: JSON.stringify({ stops }),
+      body: JSON.stringify(params),
     }),
   tripInsights: (body: unknown) =>
     jsonFetch<{ insights: string[]; fuelGal: number; fuelCost: number; tolls: number }>(
@@ -78,4 +81,3 @@ export const api = {
     return jsonFetch<unknown>(`/api/eld-summary?${qs.toString()}`);
   },
 };
-

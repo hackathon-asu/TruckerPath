@@ -1,17 +1,17 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, CheckCircle2, Gauge, Shield, Sparkles, Truck, X } from "lucide-react";
+import { ArrowLeft, CheckCircle2, Shield, Sparkles, Truck, X } from "lucide-react";
 import { api } from "@/lib/client";
 import { formatDuration } from "@/lib/format";
 import { cn } from "@/lib/cn";
 import type { RoutingProfile, StopPoint } from "@/lib/types";
+import type { RouteAlt, RouteOverlaySegment } from "@/lib/route";
 import type { PostTripAnalysis } from "@/lib/eld-engine";
 import { formatDutyStatus } from "@/lib/eld-engine";
 
 interface Props {
   stops: StopPoint[];
-  miles: number;
-  minutes: number;
+  route: RouteAlt;
   profile: RoutingProfile;
   onClose: () => void;
 }
@@ -24,7 +24,7 @@ const ELD_DRIVERS = [
   { id: "DRV005", name: "Sam Chen" },
 ];
 
-export function TripReport({ stops, miles, minutes, profile, onClose }: Props) {
+export function TripReport({ stops, route, profile, onClose }: Props) {
   const [mpg, setMpg] = useState(6);
   const [fuelPrice, setFuelPrice] = useState(3.85);
   const [opCostPerMile, setOpCostPerMile] = useState(1.2);
@@ -34,6 +34,8 @@ export function TripReport({ stops, miles, minutes, profile, onClose }: Props) {
   const [eldDriverId, setEldDriverId] = useState("DRV001");
   const [postTrip, setPostTrip] = useState<PostTripAnalysis | null>(null);
   const [loadingEld, setLoadingEld] = useState(false);
+  const miles = route.miles;
+  const minutes = route.minutes;
 
   const gallons = useMemo(() => (mpg > 0 ? miles / mpg : 0), [miles, mpg]);
   const fuelCost = gallons * fuelPrice;
@@ -93,6 +95,46 @@ export function TripReport({ stops, miles, minutes, profile, onClose }: Props) {
           <div className="mb-1 text-xs font-semibold text-ink-500">Road Options</div>
           <div className="text-xs text-ink-700">
             Avoid U-turns, Avoid Unpaved Roads, Avoid Ferries
+          </div>
+        </section>
+
+        <section className="rounded-md border border-ink-200 bg-white p-3">
+          <div className="mb-3 flex items-center gap-2 text-xs font-semibold text-ink-700">
+            <Shield className="h-3.5 w-3.5 text-brand-500" />
+            Route Screening
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <ScreeningBadge
+              tone={route.blocked ? "rose" : route.complianceScore >= 85 ? "emerald" : "amber"}
+              label={route.blocked ? "Blocked" : `Compliance ${route.complianceScore}`}
+            />
+            <ScreeningBadge tone="slate" label={humanizeCoverage(route.coverageLevel)} />
+            <ScreeningBadge tone="slate" label={humanizeBasis(route.routeBasis)} />
+            <ScreeningBadge tone="slate" label={`${capitalize(route.screeningConfidence)} confidence`} />
+          </div>
+
+          <div className="mt-3 grid grid-cols-2 gap-2 text-[11px]">
+            <Stat label="Flagged Segments" value={String(route.overlays.length)} />
+            <Stat label="Blocking Issues" value={String(route.violations.length)} />
+          </div>
+
+          {route.violations[0] && (
+            <div className="mt-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+              <div className="font-semibold">{route.violations[0].title}</div>
+              <div className="mt-0.5 text-[11px] text-rose-600">{route.violations[0].message}</div>
+            </div>
+          )}
+
+          <div className="mt-3 space-y-2">
+            {route.overlays.length > 0 ? (
+              route.overlays.map((overlay) => (
+                <RouteOverlayCard key={overlay.id} overlay={overlay} />
+              ))
+            ) : (
+              <div className="rounded-md border border-dashed border-ink-200 bg-ink-50 px-3 py-2 text-xs text-ink-500">
+                No corridor-specific overlays matched this route. Federal baseline screening still applied.
+              </div>
+            )}
           </div>
         </section>
 
@@ -302,6 +344,65 @@ function Stat({ label, value }: { label: string; value: string }) {
       <div className="mt-0.5 font-semibold text-ink-800">{value}</div>
     </div>
   );
+}
+
+function ScreeningBadge({
+  tone,
+  label,
+}: {
+  tone: "emerald" | "amber" | "rose" | "slate";
+  label: string;
+}) {
+  const classes = {
+    emerald: "border-emerald-200 bg-emerald-50 text-emerald-700",
+    amber: "border-amber-200 bg-amber-50 text-amber-700",
+    rose: "border-rose-200 bg-rose-50 text-rose-700",
+    slate: "border-ink-200 bg-ink-50 text-ink-700",
+  }[tone];
+
+  return <span className={cn("rounded-full border px-2 py-1 text-[11px] font-medium", classes)}>{label}</span>;
+}
+
+function RouteOverlayCard({ overlay }: { overlay: RouteOverlaySegment }) {
+  const tone =
+    overlay.status === "violation"
+      ? "border-rose-200 bg-rose-50 text-rose-700"
+      : overlay.status === "advisory"
+        ? "border-amber-200 bg-amber-50 text-amber-700"
+        : "border-emerald-200 bg-emerald-50 text-emerald-700";
+
+  return (
+    <div className={cn("rounded-md border px-3 py-2 text-xs", tone)}>
+      <div className="flex items-center justify-between gap-2">
+        <div className="font-semibold">{overlay.title}</div>
+        <span className="rounded-full bg-white/70 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide">
+          {overlay.status}
+        </span>
+      </div>
+      <div className="mt-1 text-[11px]">{overlay.message}</div>
+      {overlay.states.length > 0 && (
+        <div className="mt-1 text-[10px] font-medium uppercase tracking-wide opacity-80">
+          {overlay.states.join(", ")}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function humanizeCoverage(value: RouteAlt["coverageLevel"]) {
+  if (value === "state-overlay-screened") return "State overlays active";
+  if (value === "federal-only") return "Federal baseline";
+  return "Generic only";
+}
+
+function humanizeBasis(value: RouteAlt["routeBasis"]) {
+  if (value === "state-overlay-screened") return "State-screened";
+  if (value === "federal-backbone-screened") return "Federal-screened";
+  return "Generic preview";
+}
+
+function capitalize(value: string) {
+  return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
 

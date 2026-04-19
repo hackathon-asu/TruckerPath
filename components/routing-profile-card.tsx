@@ -57,6 +57,23 @@ export function RoutingProfileCard({
         <Stat label="Axles" value={String(profile.axles)} />
         <Stat label="Trailers" value={String(profile.trailers)} />
       </dl>
+      <div className="mt-3 flex flex-wrap gap-2 text-[11px]">
+        {profile.route_policy?.enforce_permitted_network !== false && (
+          <Pill label="Permitted network" />
+        )}
+        {profile.route_policy?.enforce_hazmat_restrictions !== false && (
+          <Pill label={profile.hazmat ? "Hazmat enforced" : "Hazmat screened"} />
+        )}
+        {profile.route_policy?.enforce_clearance_limits !== false && (
+          <Pill label="Clearance enforced" />
+        )}
+        {(profile.avoid_areas?.length ?? 0) > 0 && (
+          <Pill label={`${profile.avoid_areas?.length ?? 0} avoid area${profile.avoid_areas?.length === 1 ? "" : "s"}`} />
+        )}
+        {(profile.avoid_bridges?.length ?? 0) > 0 && (
+          <Pill label={`${profile.avoid_bridges?.length ?? 0} bridge rule set${profile.avoid_bridges?.length === 1 ? "" : "s"}`} />
+        )}
+      </div>
     </div>
   );
 }
@@ -67,5 +84,13 @@ function Stat({ label, value }: { label: string; value: string }) {
       <div className="text-ink-400">{label}</div>
       <div className="font-semibold text-ink-900">{value}</div>
     </div>
+  );
+}
+
+function Pill({ label }: { label: string }) {
+  return (
+    <span className="rounded-full bg-ink-100 px-2 py-1 text-ink-700">
+      {label}
+    </span>
   );
 }

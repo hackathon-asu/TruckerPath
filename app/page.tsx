@@ -112,8 +112,7 @@ export default function HomePage() {
       return (
         <TripReport
           stops={stops}
-          miles={miles}
-          minutes={minutes}
+          route={activeRoute}
           profile={profile}
           onClose={() => setDrawer(null)}
         />
@@ -211,6 +210,7 @@ export default function HomePage() {
               id: r.id,
               polyline: r.polyline,
               active: r.id === (activeRoute?.id ?? ""),
+              overlays: r.id === (activeRoute?.id ?? "") ? r.overlays : [],
             }))}
             pois={drawer === "pois" ? overlayPois.map((p) => ({
               id: p.id,

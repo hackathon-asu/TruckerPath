@@ -7,6 +7,141 @@ export type DriverType =
   | "COMPANY_DRIVER_C"
   | "OTHER";
 
+export interface RouteCoordinate {
+  lat: number;
+  lng: number;
+}
+
+export interface AvoidArea {
+  area_name: string;
+  type: "rectangle" | "polygon";
+  coordinates: RouteCoordinate[][];
+}
+
+export interface AvoidBridgeRule {
+  state: string;
+  rules: string[];
+}
+
+export interface RoutePolicy {
+  enforce_permitted_network?: boolean;
+  enforce_hazmat_restrictions?: boolean;
+  enforce_clearance_limits?: boolean;
+}
+
+export type RoutingSourceJurisdiction = "federal" | "state";
+export type RoutingSourceType =
+  | "statute"
+  | "map"
+  | "dataset"
+  | "registry"
+  | "state-dot-portal"
+  | "arcgis-service"
+  | "pdf";
+export type RoutingIngestionMethod =
+  | "federal-baseline"
+  | "state-portal"
+  | "structured-geometry"
+  | "pdf-extraction"
+  | "manual-review";
+export type RoutingCoverageLevel = "generic-only" | "federal-only" | "state-overlay-screened";
+export type RoutingConfidence = "low" | "medium" | "high";
+export type RouteRestrictionType =
+  | "federal_network"
+  | "bridge_clearance"
+  | "bridge_weight"
+  | "tunnel_clearance"
+  | "tunnel_hazmat"
+  | "state_hazmat"
+  | "route_height_limit"
+  | "route_weight_limit"
+  | "route_width_limit"
+  | "route_length_limit"
+  | "truck_prohibited"
+  | "hazmat_time_window"
+  | "inspection_checkpoint"
+  | "state_review_zone"
+  | "escort_requirement"
+  | "avoid_area"
+  | "avoid_bridge_rule";
+export type RestrictionVerificationStatus =
+  | "official-source"
+  | "normalized-reviewed"
+  | "needs-review";
+export type RestrictionGeometryType = "bbox" | "polyline";
+
+export interface RoutingSourceRegistryEntry {
+  id: string;
+  jurisdiction_level: RoutingSourceJurisdiction;
+  state?: string;
+  agency: string;
+  title: string;
+  source_url: string;
+  source_type: RoutingSourceType;
+  publish_date?: string;
+  effective_date?: string;
+  last_checked_at: string;
+  ingestion_method: RoutingIngestionMethod;
+  notes?: string;
+}
+
+export interface RouteRestrictionVehicleApplicability {
+  min_height_ft?: number;
+  max_height_ft?: number;
+  min_weight_lb?: number;
+  max_weight_lb?: number;
+  max_width_ft?: number;
+  min_width_ft?: number;
+  max_length_ft?: number;
+  min_length_ft?: number;
+  max_trailers?: number;
+  min_axles?: number;
+}
+
+export interface RouteRestrictionHazmatApplicability {
+  restricted: boolean;
+  description?: string;
+}
+
+export interface RouteRestrictionBoundingBox {
+  min_lat: number;
+  max_lat: number;
+  min_lng: number;
+  max_lng: number;
+}
+
+export interface RouteRestrictionPolylineGeometry {
+  coordinates: RouteCoordinate[];
+  buffer_miles: number;
+}
+
+export interface NormalizedRouteRestriction {
+  id: string;
+  source_id: string;
+  state?: string;
+  title: string;
+  route_id?: string;
+  geometry_type: RestrictionGeometryType;
+  segment_description: string;
+  begin_mp?: number;
+  end_mp?: number;
+  restriction_type: RouteRestrictionType;
+  restriction_value?: number | string | boolean;
+  restriction_units?: string;
+  applies_to_vehicle_class?: "all-trucks" | "hazmat" | "oversize" | "overweight" | "custom";
+  vehicle_applicability?: RouteRestrictionVehicleApplicability;
+  hazmat_applicability?: RouteRestrictionHazmatApplicability;
+  directionality?: "both" | "forward" | "reverse";
+  permit_required?: boolean;
+  local_approval_required?: boolean;
+  raw_text: string;
+  verification_status: RestrictionVerificationStatus;
+  bbox?: RouteRestrictionBoundingBox;
+  polyline?: RouteRestrictionPolylineGeometry;
+  rule_label?: string;
+  advisory_only?: boolean;
+}
+
 export interface Driver {
   driver_id: number;
   driver_first_name: string;
@@ -36,6 +171,9 @@ export interface RoutingProfile {
   axles: number;
   trailers: number;
   hazmat?: boolean;
+  avoid_areas?: AvoidArea[];
+  avoid_bridges?: AvoidBridgeRule[];
+  route_policy?: RoutePolicy;
 }
 
 export interface StopPoint {

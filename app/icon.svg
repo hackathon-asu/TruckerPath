@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="128" fill="#2563eb" />
+  
+  <!-- Stylized truck cab facing forward -->
+  <path d="M128 220C128 178 160 148 200 148H312C352 148 384 178 384 220V330H128V220Z" fill="#eff6ff" />
+  
+  <!-- Windshield -->
+  <path d="M152 180C152 168 164 158 176 158H336C348 158 360 168 360 180V232H152V180Z" fill="#0f172a" />
+  
+  <!-- Light reflections on windshield -->
+  <path d="M176 170L190 220H210L196 170H176Z" fill="#1e293b" />
+  
+  <!-- Headlights -->
+  <circle cx="176" cy="276" r="24" fill="#fbbf24" />
+  <circle cx="336" cy="276" r="24" fill="#fbbf24" />
+  
+  <!-- Inner headlights -->
+  <circle cx="176" cy="276" r="12" fill="#fffbeb" />
+  <circle cx="336" cy="276" r="12" fill="#fffbeb" />
+
+  <!-- Grille -->
+  <rect x="220" y="258" width="72" height="10" rx="5" fill="#94a3b8" />
+  <rect x="210" y="278" width="92" height="10" rx="5" fill="#94a3b8" />
+  <rect x="220" y="298" width="72" height="10" rx="5" fill="#94a3b8" />
+
+  <!-- CoPilot Sparkle at top right -->
+  <path d="M380 90C380 120 410 135 440 135C410 135 380 150 380 180C380 150 350 135 320 135C350 135 380 120 380 90Z" fill="#fbbf24" />
+  <path d="M420 70C420 85 435 92 450 92C435 92 420 100 420 115C420 100 405 92 390 92C405 92 420 85 420 70Z" fill="#fef08a" />
+</svg>

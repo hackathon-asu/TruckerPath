@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import {
+  AlertTriangle,
   ChevronRight,
   Clock,
   FileBarChart,
@@ -68,6 +69,8 @@ export function TripPlanner({
   const [tab, setTab] = useState<"recent" | "saved" | "shared">("recent");
   const { items: saved, save: saveRoute, remove } = useSavedRoutes();
   const active = routes.find((r) => r.id === activeRouteId) ?? routes[0] ?? null;
+  const topAdvisory =
+    active?.advisories.find((notice) => notice.type !== "coverage") ?? active?.advisories[0] ?? null;
 
   useEffect(() => {
     if (stops.length < 2) {
@@ -77,7 +80,10 @@ export function TripPlanner({
     }
     let alive = true;
     api
-      .calcRoute(stops.map((s) => ({ latitude: s.latitude, longitude: s.longitude })))
+      .calcRoute({
+        stops: stops.map((s) => ({ latitude: s.latitude, longitude: s.longitude })),
+        profile,
+      })
       .then((r) => {
         if (!alive) return;
         setRoutes(r.routes);
@@ -86,7 +92,7 @@ export function TripPlanner({
     return () => {
       alive = false;
     };
-  }, [stops, setRoutes, setActiveRouteId]);
+  }, [profile, stops, setRoutes, setActiveRouteId]);
 
   const addStop = (s: StopPoint) => setStops([...stops, s]);
   const removeStop = (id: string) => setStops(stops.filter((x) => x.id !== id));
@@ -151,6 +157,20 @@ export function TripPlanner({
               <Metric icon={<Fuel className="h-3.5 w-3.5" />} label="Est. Fuel Cost" value={`$${formatThousands(active.fuelCost)}`} />
               <Metric icon={<MapIcon className="h-3.5 w-3.5" />} label="Tolls" value={`$${active.tolls.toFixed(1)}`} />
             </div>
+            <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px]">
+              <StatusBadge
+                tone={active.blocked ? "rose" : active.complianceScore >= 85 ? "emerald" : "amber"}
+                label={active.blocked ? "Blocked" : `Compliance ${active.complianceScore}`}
+              />
+              <StatusBadge tone="slate" label={humanizeCoverage(active.coverageLevel)} />
+              <StatusBadge tone="slate" label={humanizeBasis(active.routeBasis)} />
+            </div>
+            {active.violations.length > 0 && (
+              <RouteNotice tone="critical" title={active.violations[0].title} message={active.violations[0].message} />
+            )}
+            {active.violations.length === 0 && topAdvisory && (
+              <RouteNotice tone="warning" title={topAdvisory.title} message={topAdvisory.message} />
+            )}
           </div>
         )}
 
@@ -212,11 +232,11 @@ export function TripPlanner({
             </button>
             <button
               className="btn-primary flex-[1.2] disabled:cursor-not-allowed disabled:opacity-50"
-              disabled={stops.length < 2 || sending}
+              disabled={stops.length < 2 || sending || !!active?.blocked}
               onClick={onSendRoute}
             >
               <Send className="h-4 w-4" />
-              {sending ? "Sending…" : "Send Route"}
+              {sending ? "Sending…" : active?.blocked ? "Review Needed" : "Send Route"}
             </button>
           </div>
         )}
@@ -359,6 +379,60 @@ function ActionRow({
       <ChevronRight className="h-4 w-4 text-ink-400" />
     </button>
   );
+}
+
+function StatusBadge({
+  label,
+  tone,
+}: {
+  label: string;
+  tone: "emerald" | "amber" | "rose" | "slate";
+}) {
+  const cls = {
+    emerald: "bg-emerald-50 text-emerald-700",
+    amber: "bg-amber-50 text-amber-700",
+    rose: "bg-rose-50 text-rose-700",
+    slate: "bg-ink-100 text-ink-700",
+  }[tone];
+  return <span className={cn("rounded-full px-2 py-1 font-medium", cls)}>{label}</span>;
+}
+
+function RouteNotice({
+  tone,
+  title,
+  message,
+}: {
+  tone: "critical" | "warning";
+  title: string;
+  message: string;
+}) {
+  const cls =
+    tone === "critical"
+      ? "border-rose-200 bg-rose-50 text-rose-700"
+      : "border-amber-200 bg-amber-50 text-amber-700";
+  return (
+    <div className={cn("mt-3 rounded-md border px-3 py-2 text-[11px]", cls)}>
+      <div className="flex items-start gap-2">
+        <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+        <div>
+          <div className="font-semibold">{title}</div>
+          <div className="mt-0.5 leading-relaxed">{message}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function humanizeCoverage(value: "generic-only" | "federal-only" | "state-overlay-screened") {
+  if (value === "generic-only") return "Generic fallback";
+  if (value === "federal-only") return "Federal baseline";
+  return "State overlays";
+}
+
+function humanizeBasis(value: "generic-driving" | "federal-backbone-screened" | "state-overlay-screened") {
+  if (value === "generic-driving") return "Generic driving";
+  if (value === "federal-backbone-screened") return "Truck screened";
+  return "Overlay screened";
 }
 
 function EmptyRecent() {
