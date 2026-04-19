@@ -12,8 +12,10 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   AlertTriangle,
   ChevronDown,
+  ChevronRight,
   CircleDot,
   Download,
+  Filter,
   RefreshCw,
   Sparkles,
   Truck,
@@ -29,25 +31,68 @@ import { DetailDrawer } from "@/components/reports/detail-drawer";
 import { FleetMapCard } from "@/components/reports/fleet-map-card";
 import type {
   CurrentTrip,
-  DashboardKpi,
   DispatcherSnapshot,
   DispatcherTask,
   DocumentBillingCase,
   LoadBoardRecord,
-  OperationalAlert,
   OperationsDriver,
+  RouteChoice,
 } from "@/lib/types";
 
 const sectionNav = [
-  { id: "todo", label: "Smart to-do" },
-  { id: "drivers", label: "Available drivers" },
-  { id: "trips", label: "Current trips" },
+  { id: "todo", label: "AI insights & to-do" },
+  { id: "ready", label: "Ready to dispatch" },
+  { id: "active", label: "Active trips" },
+  { id: "exceptions", label: "Needs attention" },
   { id: "loads", label: "Load board" },
-  { id: "routes", label: "Route optimizer" },
   { id: "costs", label: "Cost intelligence" },
   { id: "safety", label: "Safety / compliance" },
   { id: "docs", label: "Docs / billing" },
 ] as const;
+
+type HealthTone = "good" | "warning" | "danger";
+
+function tripHealth(trip: CurrentTrip): { label: string; tone: HealthTone } {
+  const fuel = trip.fuelStatus?.toLowerCase() ?? "";
+  const parking = trip.parkingStopPlan?.toLowerCase() ?? "";
+  const detention = trip.detentionState?.toLowerCase() ?? "";
+  const detentionActive =
+    detention.length > 0 &&
+    !/none|no|not started|n\/a|clear|ok/.test(detention);
+  if (
+    trip.routeHealth === "risk" ||
+    trip.liveHosHours < 2 ||
+    /low|empty|risk/.test(fuel)
+  ) {
+    return { label: "Risk", tone: "danger" };
+  }
+  if (
+    trip.routeHealth === "watch" ||
+    /watch|tight|soon/.test(fuel) ||
+    /risk|tight|watch/.test(parking) ||
+    detentionActive
+  ) {
+    return { label: "Watch", tone: "warning" };
+  }
+  return { label: "Good", tone: "good" };
+}
+
+function recommendedAction(trip: CurrentTrip): string {
+  const fuel = trip.fuelStatus?.toLowerCase() ?? "";
+  const parking = trip.parkingStopPlan?.toLowerCase() ?? "";
+  const detention = trip.detentionState?.toLowerCase() ?? "";
+  if (trip.routeHealth === "risk") return "Reroute recommended";
+  if (trip.liveHosHours < 2) return "HOS stop risk ahead";
+  if (/low|empty/.test(fuel)) return "Fuel stop needed soon";
+  if (/risk|tight/.test(parking)) return "Parking risk near destination";
+  if (
+    detention.length > 0 &&
+    !/none|no|not started|n\/a|clear|ok/.test(detention)
+  )
+    return "Detention in progress — escalate";
+  if (trip.routeHealth === "watch") return "Monitor route conditions";
+  return "No action needed";
+}
 
 export function ReportsDashboard() {
   const [snapshot, setSnapshot] = useState<DispatcherSnapshot | null>(null);
@@ -55,15 +100,17 @@ export function ReportsDashboard() {
   const [error, setError] = useState<string | null>(null);
   const [activeKpi, setActiveKpi] = useState<string>("all");
   const [fleetFilter, setFleetFilter] = useState<string>("all");
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [driverSort, setDriverSort] = useState<
     "readiness" | "hos" | "deadhead" | "profitability"
   >("readiness");
   const [taskFilter, setTaskFilter] = useState<
     DispatcherTask["category"] | "all"
   >("all");
-  const [activeRouteLoadId, setActiveRouteLoadId] = useState<string>("LD-4812");
-  const [selectedLastMile, setSelectedLastMile] =
-    useState<string>("fac-houston");
+  const [expandedTripId, setExpandedTripId] = useState<string | null>(null);
+  const [routeDrawerTripId, setRouteDrawerTripId] = useState<string | null>(
+    null,
+  );
   const [mapExpanded, setMapExpanded] = useState(false);
   const [docsSearch, setDocsSearch] = useState("");
   const deferredDocsSearch = useDeferredValue(docsSearch);
@@ -110,7 +157,7 @@ export function ReportsDashboard() {
 
   const filteredDrivers = useMemo(() => {
     if (!snapshot) return [];
-    const list = [...snapshot.drivers]
+    return [...snapshot.drivers]
       .filter((driver) => {
         if (activeKpi === "open_loads") return driver.status === "available";
         if (activeKpi === "on_time_rate") return driver.status !== "breakdown";
@@ -125,7 +172,6 @@ export function ReportsDashboard() {
           return right.profitabilityScore - left.profitabilityScore;
         return right.readinessScore - left.readinessScore;
       });
-    return list;
   }, [activeKpi, driverSort, snapshot]);
 
   const filteredTrips = useMemo(() => {
@@ -164,6 +210,16 @@ export function ReportsDashboard() {
     );
   }, [deferredDocsSearch, snapshot]);
 
+  const { activeTrips, exceptionTrips } = useMemo(() => {
+    const active: CurrentTrip[] = [];
+    const exceptions: CurrentTrip[] = [];
+    for (const trip of filteredTrips) {
+      if (tripHealth(trip).tone === "good") active.push(trip);
+      else exceptions.push(trip);
+    }
+    return { activeTrips: active, exceptionTrips: exceptions };
+  }, [filteredTrips]);
+
   function updateQueryParam(
     key: "driver" | "load" | "trip",
     value: string | null,
@@ -172,18 +228,6 @@ export function ReportsDashboard() {
     if (value) next.set(key, value);
     else next.delete(key);
     router.replace(`${pathname}?${next.toString()}`, { scroll: false });
-  }
-
-  function patchSnapshot(
-    mutator: (draft: DispatcherSnapshot) => DispatcherSnapshot,
-  ) {
-    setSnapshot((current) => {
-      if (!current) return current;
-      const next = mutator(current);
-      const persisted = readDemoOpsState();
-      writeDemoOpsState(persisted);
-      return next;
-    });
   }
 
   function updateDemoState(
@@ -295,19 +339,19 @@ export function ReportsDashboard() {
     );
   }
 
-  const routeLoad =
-    snapshot.loads.find((load) => load.id === activeRouteLoadId) ??
-    snapshot.loads[0];
-  const selectedLastMileInsight =
-    snapshot.lastMileInsights.find(
-      (item) => item.facilityId === selectedLastMile,
-    ) ?? snapshot.lastMileInsights[0];
   const activeDrivers = filteredDrivers.filter(
     (driver) => driver.status !== "available",
   );
   const availableDrivers = filteredDrivers.filter(
     (driver) => driver.status === "available",
   );
+
+  const routeDrawerTrip =
+    snapshot.trips.find((trip) => trip.id === routeDrawerTripId) ?? null;
+  const routeDrawerLoad = routeDrawerTrip
+    ? (snapshot.loads.find((load) => load.id === routeDrawerTrip.loadId) ??
+      null)
+    : null;
 
   return (
     <>
@@ -364,6 +408,18 @@ export function ReportsDashboard() {
                 {snapshot.modeNotice}
               </div>
             ) : null}
+          </section>
+
+          <section className="flex gap-3 overflow-x-auto rounded-[28px] border border-slate-200 bg-white px-4 py-3 shadow-[0_18px_48px_rgba(15,23,42,0.06)]">
+            {sectionNav.map((item) => (
+              <button
+                key={item.id}
+                onClick={() => scrollToSection(item.id)}
+                className="shrink-0 rounded-full border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 transition hover:border-blue-300 hover:text-blue-700"
+              >
+                {item.label}
+              </button>
+            ))}
           </section>
 
           <section className="grid grid-cols-2 gap-4 xl:grid-cols-6">
@@ -450,18 +506,7 @@ export function ReportsDashboard() {
             </div>
           </section>
 
-          <section className="flex gap-3 overflow-x-auto rounded-[28px] border border-slate-200 bg-white px-4 py-3 shadow-[0_18px_48px_rgba(15,23,42,0.06)]">
-            {sectionNav.map((item) => (
-              <button
-                key={item.id}
-                onClick={() => scrollToSection(item.id)}
-                className="shrink-0 rounded-full border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 transition hover:border-blue-300 hover:text-blue-700"
-              >
-                {item.label}
-              </button>
-            ))}
-          </section>
-
+          {/* AI Insights + To-Do Board (prominent, full detail) */}
           <section id="todo" className="grid gap-5 xl:grid-cols-[1.3fr_0.9fr]">
             <div className="overflow-hidden rounded-[30px] border border-blue-600 bg-white shadow-[0_24px_64px_rgba(37,99,235,0.12)]">
               <div className="flex flex-wrap items-center justify-between gap-3 bg-blue-700 px-5 py-4 text-white">
@@ -469,7 +514,7 @@ export function ReportsDashboard() {
                   <Sparkles className="h-5 w-5" />
                   <div>
                     <h2 className="text-xl font-semibold">
-                      Axle's smart to-do board
+                      Axle AI insights & smart to-do board
                     </h2>
                     <p className="text-sm text-blue-100">
                       Deterministic dispatch rules first, Gemini-style reasoning
@@ -629,48 +674,132 @@ export function ReportsDashboard() {
               </div>
             </div>
 
+            {/* Right rail: Fleet map, collapsible Fleet Filters, then Proactive Alerts BELOW filters */}
             <div className="space-y-5">
               <FleetMapCard
                 drivers={snapshot.drivers}
                 filter={fleetFilter}
                 onExpand={() => setMapExpanded(true)}
               />
+
+              <section className="rounded-[28px] border border-slate-200 bg-white shadow-[0_16px_44px_rgba(15,23,42,0.06)]">
+                <button
+                  onClick={() => setFiltersOpen((value) => !value)}
+                  className="flex w-full items-center justify-between gap-3 px-5 py-4 text-left"
+                >
+                  <div className="flex items-center gap-3">
+                    <Filter className="h-4 w-4 text-slate-500" />
+                    <div>
+                      <div className="text-lg font-semibold text-slate-950">
+                        Fleet filters
+                      </div>
+                      <div className="text-xs text-slate-500">
+                        Status · HOS · fuel · parking · detention · route health
+                      </div>
+                    </div>
+                  </div>
+                  <ChevronDown
+                    className={cn(
+                      "h-4 w-4 text-slate-500 transition",
+                      filtersOpen ? "rotate-180" : "",
+                    )}
+                  />
+                </button>
+                {filtersOpen ? (
+                  <div className="border-t border-slate-200 px-5 py-4">
+                    <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                      Driver status
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {[
+                        "all",
+                        "active",
+                        "available",
+                        "detained",
+                        "maintenance",
+                        "breakdown",
+                      ].map((filter) => (
+                        <button
+                          key={filter}
+                          onClick={() => setFleetFilter(filter)}
+                          className={cn(
+                            "rounded-full border px-3 py-1.5 text-xs",
+                            fleetFilter === filter
+                              ? "border-blue-500 bg-blue-50 text-blue-700"
+                              : "border-slate-200 text-slate-600",
+                          )}
+                        >
+                          {filter}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="mt-4 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                      Risk filters
+                    </div>
+                    <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
+                      {[
+                        { key: "hos", label: "HOS risk" },
+                        { key: "fuel", label: "Fuel risk" },
+                        { key: "parking", label: "Parking risk" },
+                        { key: "detention", label: "Detention risk" },
+                        { key: "route", label: "Route health" },
+                        { key: "available", label: "Available drivers" },
+                      ].map((filter) => (
+                        <button
+                          key={filter.key}
+                          onClick={() => setActiveKpi(filter.key)}
+                          className={cn(
+                            "rounded-full border px-3 py-1.5",
+                            activeKpi === filter.key
+                              ? "border-blue-500 bg-blue-50 text-blue-700"
+                              : "border-slate-200 text-slate-600",
+                          )}
+                        >
+                          {filter.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+              </section>
+
               <section className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-[0_16px_44px_rgba(15,23,42,0.06)]">
-                <h3 className="text-lg font-semibold text-slate-950">
-                  Fleet filters
-                </h3>
-                <div className="mt-4 flex flex-wrap gap-2">
-                  {[
-                    "all",
-                    "active",
-                    "available",
-                    "detained",
-                    "maintenance",
-                    "breakdown",
-                  ].map((filter) => (
-                    <button
-                      key={filter}
-                      onClick={() => setFleetFilter(filter)}
-                      className={cn(
-                        "rounded-full border px-4 py-2 text-sm",
-                        fleetFilter === filter
-                          ? "border-blue-500 bg-blue-50 text-blue-700"
-                          : "border-slate-200 text-slate-600",
-                      )}
-                    >
-                      {filter}
-                    </button>
-                  ))}
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="text-lg font-semibold text-slate-950">
+                      Proactive alerts
+                    </h3>
+                    <p className="text-xs text-slate-500">
+                      Dispatcher exceptions and driver nudges.
+                    </p>
+                  </div>
+                  <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
+                    {snapshot.alerts.length}
+                  </span>
                 </div>
-                <div className="mt-5 space-y-3">
-                  {snapshot.alerts.slice(0, 4).map((alert) => (
+                <div className="mt-4 space-y-3">
+                  {snapshot.alerts.map((alert) => (
                     <div
                       key={alert.id}
                       className="rounded-2xl border border-slate-200 px-4 py-3"
                     >
                       <div className="flex items-center justify-between gap-3">
-                        <div className="text-sm font-medium text-slate-900">
-                          {alert.title}
+                        <div className="flex items-center gap-2">
+                          <span
+                            className={cn(
+                              "rounded-full px-2.5 py-0.5 text-[11px] font-semibold",
+                              alert.severity === "critical"
+                                ? "bg-rose-50 text-rose-700"
+                                : alert.severity === "warning"
+                                  ? "bg-amber-50 text-amber-700"
+                                  : "bg-sky-50 text-sky-700",
+                            )}
+                          >
+                            {alert.severity}
+                          </span>
+                          <span className="text-[11px] uppercase tracking-[0.14em] text-slate-400">
+                            {alert.scope}
+                          </span>
                         </div>
                         <button
                           onClick={() =>
@@ -678,10 +807,13 @@ export function ReportsDashboard() {
                           }
                           className="text-xs font-semibold text-blue-600"
                         >
-                          Acknowledge
+                          Ack
                         </button>
                       </div>
-                      <p className="mt-1 text-sm text-slate-500">
+                      <div className="mt-1 text-sm font-medium text-slate-900">
+                        {alert.title}
+                      </div>
+                      <p className="mt-1 text-xs text-slate-500">
                         {alert.description}
                       </p>
                     </div>
@@ -691,18 +823,19 @@ export function ReportsDashboard() {
             </div>
           </section>
 
+          {/* Ready to dispatch */}
           <section
-            id="drivers"
+            id="ready"
             className="rounded-[30px] border border-slate-200 bg-white p-5 shadow-[0_18px_48px_rgba(15,23,42,0.06)]"
           >
             <div className="flex flex-wrap items-center justify-between gap-4">
               <div>
                 <h2 className="text-2xl font-semibold text-slate-950">
-                  Available drivers
+                  Ready to dispatch
                 </h2>
                 <p className="text-sm text-slate-500">
-                  Split by in-transit and available with readiness, HOS,
-                  maintenance, and downstream impact.
+                  Available drivers with readiness, HOS, and deadhead — ranked
+                  for assignment.
                 </p>
               </div>
               <div className="flex items-center gap-3">
@@ -726,87 +859,114 @@ export function ReportsDashboard() {
                 </div>
               </div>
             </div>
-
-            <div className="mt-5 grid gap-5 xl:grid-cols-2">
-              <DriverColumn
-                title="Actively driving"
-                drivers={activeDrivers}
-                onOpen={(driverId) => updateQueryParam("driver", driverId)}
-              />
-              <DriverColumn
-                title="Inactive / available"
+            <div className="mt-5">
+              <DriverList
                 drivers={availableDrivers}
                 onOpen={(driverId) => updateQueryParam("driver", driverId)}
               />
             </div>
+            {activeDrivers.length > 0 ? (
+              <details className="mt-4 rounded-2xl border border-slate-200 px-4 py-3 text-sm">
+                <summary className="cursor-pointer font-medium text-slate-700">
+                  Show {activeDrivers.length} actively driving
+                </summary>
+                <div className="mt-3">
+                  <DriverList
+                    drivers={activeDrivers}
+                    onOpen={(driverId) => updateQueryParam("driver", driverId)}
+                  />
+                </div>
+              </details>
+            ) : null}
           </section>
 
+          {/* Active trips */}
           <section
-            id="trips"
+            id="active"
             className="rounded-[30px] border border-slate-200 bg-white p-5 shadow-[0_18px_48px_rgba(15,23,42,0.06)]"
           >
             <div className="flex items-center justify-between gap-3">
               <div>
                 <h2 className="text-2xl font-semibold text-slate-950">
-                  Current trips
+                  Active trips
                 </h2>
                 <p className="text-sm text-slate-500">
-                  Live HOS, ETA, route health, parking plans, detention state,
-                  and reroute actions.
+                  Live monitoring — expand a row for fuel, parking, detention,
+                  and route reasoning.
                 </p>
               </div>
+              <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
+                {activeTrips.length} healthy
+              </span>
             </div>
-            <div className="mt-5 space-y-4">
-              {filteredTrips.map((trip) => (
-                <div
-                  key={trip.id}
-                  className="rounded-[24px] border border-slate-200 p-4"
-                >
-                  <div className="grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_repeat(5,minmax(0,1fr))_140px]">
-                    <div>
-                      <div className="text-sm font-semibold text-slate-950">
-                        {trip.driverName} • {trip.truckUnit}
-                      </div>
-                      <div className="mt-1 text-sm text-slate-500">
-                        {trip.origin} → {trip.destination}
-                      </div>
-                    </div>
-                    <TripMetric
-                      label="Live HOS"
-                      value={`${trip.liveHosHours.toFixed(1)}h`}
-                    />
-                    <TripMetric label="Live ETA" value={trip.liveEta} />
-                    <TripMetric
-                      label="Route health"
-                      value={trip.routeHealth}
-                      tone={
-                        trip.routeHealth === "risk"
-                          ? "danger"
-                          : trip.routeHealth === "watch"
-                            ? "warning"
-                            : "good"
-                      }
-                    />
-                    <TripMetric label="Fuel" value={trip.fuelStatus} />
-                    <TripMetric label="Parking" value={trip.parkingStopPlan} />
-                    <TripMetric label="Detention" value={trip.detentionState} />
-                    <div className="flex flex-col gap-2">
-                      <button
-                        onClick={() => updateQueryParam("trip", trip.id)}
-                        className="btn-outline justify-center"
-                      >
-                        Expand
-                      </button>
-                      <button
-                        onClick={() => setActiveRouteLoadId(trip.loadId)}
-                        className="btn-primary justify-center"
-                      >
-                        Reroute
-                      </button>
-                    </div>
-                  </div>
+            <div className="mt-4 space-y-2">
+              {activeTrips.length === 0 ? (
+                <div className="rounded-2xl border border-dashed border-slate-200 px-4 py-8 text-center text-sm text-slate-500">
+                  No healthy trips in view.
                 </div>
-              ))}
+              ) : (
+                activeTrips.map((trip) => (
+                  <TripCard
+                    key={trip.id}
+                    trip={trip}
+                    expanded={expandedTripId === trip.id}
+                    onToggle={() =>
+                      setExpandedTripId((current) =>
+                        current === trip.id ? null : trip.id,
+                      )
+                    }
+                    onOpenDetail={() => updateQueryParam("trip", trip.id)}
+                    onOptimize={() => setRouteDrawerTripId(trip.id)}
+                    onOpenLoad={() => updateQueryParam("load", trip.loadId)}
+                    onOpenDriver={() => updateQueryParam("driver", trip.driverId)}
+                  />
+                ))
+              )}
+            </div>
+          </section>
+
+          {/* Exceptions / Needs attention */}
+          <section
+            id="exceptions"
+            className="rounded-[30px] border border-amber-200 bg-white p-5 shadow-[0_18px_48px_rgba(15,23,42,0.06)]"
+          >
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h2 className="text-2xl font-semibold text-slate-950">
+                  Needs attention
+                </h2>
+                <p className="text-sm text-slate-500">
+                  Trips flagged for HOS, fuel, parking, detention, or route
+                  risk.
+                </p>
+              </div>
+              <span className="rounded-full bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700">
+                {exceptionTrips.length} flagged
+              </span>
+            </div>
+            <div className="mt-4 space-y-2">
+              {exceptionTrips.length === 0 ? (
+                <div className="rounded-2xl border border-dashed border-slate-200 px-4 py-8 text-center text-sm text-slate-500">
+                  Nothing flagged. All trips are healthy.
+                </div>
+              ) : (
+                exceptionTrips.map((trip) => (
+                  <TripCard
+                    key={trip.id}
+                    trip={trip}
+                    expanded={expandedTripId === trip.id}
+                    onToggle={() =>
+                      setExpandedTripId((current) =>
+                        current === trip.id ? null : trip.id,
+                      )
+                    }
+                    onOpenDetail={() => updateQueryParam("trip", trip.id)}
+                    onOptimize={() => setRouteDrawerTripId(trip.id)}
+                    onOpenLoad={() => updateQueryParam("load", trip.loadId)}
+                    onOpenDriver={() => updateQueryParam("driver", trip.driverId)}
+                  />
+                ))
+              )}
             </div>
           </section>
 
@@ -897,278 +1057,6 @@ export function ReportsDashboard() {
                 </tbody>
               </table>
             </div>
-          </section>
-
-          <section
-            id="routes"
-            className="rounded-[30px] border border-slate-200 bg-white p-5 shadow-[0_18px_48px_rgba(15,23,42,0.06)]"
-          >
-            <div className="flex flex-wrap items-center justify-between gap-4">
-              <div>
-                <h2 className="text-2xl font-semibold text-slate-950">
-                  Route optimizer
-                </h2>
-                <p className="text-sm text-slate-500">
-                  Four route choices with legality, fuel, HOS, parking, weather,
-                  detention, and last-mile confidence.
-                </p>
-              </div>
-              <div className="relative">
-                <select
-                  value={activeRouteLoadId}
-                  onChange={(event) => setActiveRouteLoadId(event.target.value)}
-                  className="input min-w-[260px] appearance-none pr-10"
-                >
-                  {snapshot.loads.map((load) => (
-                    <option key={load.id} value={load.id}>
-                      {load.id} • {load.lane}
-                    </option>
-                  ))}
-                </select>
-                <ChevronDown className="pointer-events-none absolute right-3 top-3.5 h-4 w-4 text-slate-400" />
-              </div>
-            </div>
-            <div className="mt-5 grid gap-4 xl:grid-cols-4">
-              {routeLoad.routeChoices.map((choice) => (
-                <article
-                  key={choice.id}
-                  className={cn(
-                    "rounded-[24px] border p-4",
-                    choice.label === "Recommended"
-                      ? "border-blue-500 bg-blue-50/60"
-                      : "border-slate-200",
-                  )}
-                >
-                  <div className="flex items-center justify-between">
-                    <div className="text-lg font-semibold text-slate-950">
-                      {choice.label}
-                    </div>
-                    {choice.label === "Recommended" ? (
-                      <span className="rounded-full bg-blue-600 px-3 py-1 text-xs font-semibold text-white">
-                        Best overall
-                      </span>
-                    ) : null}
-                  </div>
-                  <div className="mt-4 grid grid-cols-2 gap-2 text-sm">
-                    <RouteMetric label="Miles" value={String(choice.miles)} />
-                    <RouteMetric
-                      label="ETA"
-                      value={`${choice.etaMinutes} min`}
-                    />
-                    <RouteMetric label="Fuel" value={`$${choice.fuelCost}`} />
-                    <RouteMetric label="Tolls" value={`$${choice.tolls}`} />
-                    <RouteMetric
-                      label="Savings"
-                      value={`$${choice.fuelPartnerSavings}`}
-                    />
-                    <RouteMetric
-                      label="HOS left"
-                      value={`${choice.leftoverHosHours.toFixed(1)}h`}
-                    />
-                    <RouteMetric
-                      label="Parking"
-                      value={`${choice.parkingViability}%`}
-                    />
-                    <RouteMetric
-                      label="Last mile"
-                      value={`${choice.lastMileConfidence}%`}
-                    />
-                  </div>
-                  <div className="mt-4 flex flex-wrap gap-2 text-xs">
-                    {choice.stateWarnings.map((warning) => (
-                      <span
-                        key={warning}
-                        className="rounded-full bg-amber-100 px-3 py-1 text-amber-700"
-                      >
-                        {warning}
-                      </span>
-                    ))}
-                    <span className="rounded-full bg-emerald-100 px-3 py-1 text-emerald-700">
-                      Legality {choice.legalityScore}
-                    </span>
-                    <span className="rounded-full bg-slate-100 px-3 py-1 text-slate-600">
-                      Weather {choice.weatherRisk}
-                    </span>
-                    <span className="rounded-full bg-slate-100 px-3 py-1 text-slate-600">
-                      Detention {choice.detentionSensitivity}
-                    </span>
-                  </div>
-                  <p className="mt-4 text-sm text-slate-600">
-                    {choice.explanation}
-                  </p>
-                  <button
-                    onClick={() =>
-                      handleAssign(routeLoad.id, routeLoad.bestMatchDriverId)
-                    }
-                    className="btn-outline mt-4 w-full justify-center"
-                  >
-                    Send to Map workflow
-                  </button>
-                </article>
-              ))}
-            </div>
-          </section>
-
-          <section className="grid gap-5 xl:grid-cols-[0.95fr_1.05fr]">
-            <section className="rounded-[30px] border border-slate-200 bg-white p-5 shadow-[0_18px_48px_rgba(15,23,42,0.06)]">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <h2 className="text-2xl font-semibold text-slate-950">
-                    Last-mile navigation
-                  </h2>
-                  <p className="text-sm text-slate-500">
-                    Truck entrance, staging area, avoid notes, and image-backed
-                    confidence.
-                  </p>
-                </div>
-                <div className="relative">
-                  <select
-                    value={selectedLastMile}
-                    onChange={(event) =>
-                      setSelectedLastMile(event.target.value)
-                    }
-                    className="input min-w-[220px] appearance-none pr-10"
-                  >
-                    {snapshot.lastMileInsights.map((insight) => (
-                      <option
-                        key={insight.facilityId}
-                        value={insight.facilityId}
-                      >
-                        {insight.facilityName}
-                      </option>
-                    ))}
-                  </select>
-                  <ChevronDown className="pointer-events-none absolute right-3 top-3.5 h-4 w-4 text-slate-400" />
-                </div>
-              </div>
-              <div className="mt-5 rounded-[24px] border border-slate-200 bg-slate-50 p-4">
-                <div className="text-lg font-semibold text-slate-950">
-                  {selectedLastMileInsight.recommendedEntrance}
-                </div>
-                <div className="mt-2 text-sm text-slate-600">
-                  Parking / staging: {selectedLastMileInsight.parkingArea}
-                </div>
-                <div className="mt-3 rounded-2xl bg-white p-4 text-sm text-slate-600">
-                  {selectedLastMileInsight.reasoning}
-                </div>
-                <div className="mt-4 flex flex-wrap gap-2">
-                  {selectedLastMileInsight.avoidNotes.map((note) => (
-                    <span
-                      key={note}
-                      className="rounded-full bg-rose-50 px-3 py-1 text-xs text-rose-700"
-                    >
-                      {note}
-                    </span>
-                  ))}
-                  <span className="rounded-full bg-blue-50 px-3 py-1 text-xs text-blue-700">
-                    Confidence{" "}
-                    {Math.round(selectedLastMileInsight.confidence * 100)}%
-                  </span>
-                </div>
-                <div className="mt-4 grid gap-3 md:grid-cols-2">
-                  {selectedLastMileInsight.imageRefs.map((ref) => (
-                    <div
-                      key={ref}
-                      className="overflow-hidden rounded-[20px] border border-slate-200 bg-white"
-                    >
-                      <Image
-                        src={ref}
-                        alt={`${selectedLastMileInsight.facilityName} facility preview`}
-                        width={600}
-                        height={320}
-                        className="h-40 w-full object-cover"
-                      />
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </section>
-
-            <section className="rounded-[30px] border border-slate-200 bg-white p-5 shadow-[0_18px_48px_rgba(15,23,42,0.06)]">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <h2 className="text-2xl font-semibold text-slate-950">
-                    Proactive alerts
-                  </h2>
-                  <p className="text-sm text-slate-500">
-                    Dispatcher-facing exceptions plus driver-facing nudges.
-                  </p>
-                </div>
-              </div>
-              <div className="mt-5 space-y-3">
-                {snapshot.alerts.map((alert) => (
-                  <div
-                    key={alert.id}
-                    className="rounded-[22px] border border-slate-200 p-4"
-                  >
-                    <div className="flex items-center justify-between gap-3">
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span
-                            className={cn(
-                              "rounded-full px-3 py-1 text-xs font-semibold",
-                              alert.severity === "critical"
-                                ? "bg-rose-50 text-rose-700"
-                                : alert.severity === "warning"
-                                  ? "bg-amber-50 text-amber-700"
-                                  : "bg-sky-50 text-sky-700",
-                            )}
-                          >
-                            {alert.severity}
-                          </span>
-                          <span className="text-xs uppercase tracking-[0.18em] text-slate-400">
-                            {alert.scope}
-                          </span>
-                        </div>
-                        <div className="mt-2 text-base font-semibold text-slate-950">
-                          {alert.title}
-                        </div>
-                        <div className="mt-1 text-sm text-slate-600">
-                          {alert.description}
-                        </div>
-                      </div>
-                      <div className="flex flex-col gap-2">
-                        <button
-                          onClick={() =>
-                            handleAlertStatus(alert.id, "acknowledged")
-                          }
-                          className="btn-outline justify-center"
-                        >
-                          Acknowledge
-                        </button>
-                        <button
-                          onClick={() => handleAlertStatus(alert.id, "snoozed")}
-                          className="btn-outline justify-center"
-                        >
-                          Snooze
-                        </button>
-                      </div>
-                    </div>
-                    {alert.draftMessage ? (
-                      <div className="mt-3 rounded-2xl bg-slate-50 p-3 text-sm text-slate-600">
-                        {alert.draftMessage}
-                      </div>
-                    ) : null}
-                    {alert.sourceUrl ? (
-                      <div className="mt-3 text-xs text-slate-500">
-                        Source:{" "}
-                        <a
-                          href={alert.sourceUrl}
-                          className="text-blue-600 underline"
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          official reference
-                        </a>
-                        {alert.effectiveDate
-                          ? ` • effective ${alert.effectiveDate}`
-                          : ""}
-                      </div>
-                    ) : null}
-                  </div>
-                ))}
-              </div>
-            </section>
           </section>
 
           <section className="grid gap-5 xl:grid-cols-[1.1fr_0.9fr]">
@@ -1485,7 +1373,41 @@ export function ReportsDashboard() {
         }
         onClose={() => updateQueryParam("trip", null)}
       >
-        {selectedTrip ? <TripDetail trip={selectedTrip} /> : null}
+        {selectedTrip ? (
+          <TripDetail
+            trip={selectedTrip}
+            lastMile={
+              snapshot.lastMileInsights.find(
+                (item) => item.facilityId === selectedTrip.loadId,
+              ) ?? snapshot.lastMileInsights[0]
+            }
+          />
+        ) : null}
+      </DetailDrawer>
+
+      {/* Route optimization drawer — launched from trip cards */}
+      <DetailDrawer
+        open={Boolean(routeDrawerTrip)}
+        title={
+          routeDrawerTrip
+            ? `Optimize route • ${routeDrawerTrip.id}`
+            : "Optimize route"
+        }
+        subtitle={
+          routeDrawerTrip
+            ? `${routeDrawerTrip.origin} → ${routeDrawerTrip.destination}`
+            : undefined
+        }
+        onClose={() => setRouteDrawerTripId(null)}
+      >
+        {routeDrawerTrip && routeDrawerLoad ? (
+          <RouteOptimizer
+            choices={routeDrawerLoad.routeChoices}
+            onAssign={() =>
+              handleAssign(routeDrawerLoad.id, routeDrawerLoad.bestMatchDriverId)
+            }
+          />
+        ) : null}
       </DetailDrawer>
 
       {mapExpanded ? (
@@ -1503,41 +1425,182 @@ export function ReportsDashboard() {
   );
 }
 
-function DriverColumn({
-  title,
+/* ---------- Trip card (2-layer, chip-based) ---------- */
+
+function TripCard({
+  trip,
+  expanded,
+  onToggle,
+  onOpenDetail,
+  onOptimize,
+  onOpenLoad,
+  onOpenDriver,
+}: {
+  trip: CurrentTrip;
+  expanded: boolean;
+  onToggle: () => void;
+  onOpenDetail: () => void;
+  onOptimize: () => void;
+  onOpenLoad: () => void;
+  onOpenDriver: () => void;
+}) {
+  const health = tripHealth(trip);
+  const action = recommendedAction(trip);
+  const routeTone: HealthTone =
+    trip.routeHealth === "risk"
+      ? "danger"
+      : trip.routeHealth === "watch"
+        ? "warning"
+        : "good";
+
+  return (
+    <div
+      className={cn(
+        "rounded-[20px] border bg-white transition",
+        expanded ? "border-blue-300 shadow-[0_12px_32px_rgba(37,99,235,0.08)]" : "border-slate-200",
+      )}
+    >
+      <button
+        onClick={onToggle}
+        className="grid w-full gap-3 px-4 py-3 text-left lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1.2fr)_auto_auto_auto_minmax(0,1.4fr)_auto] lg:items-center"
+      >
+        <div>
+          <div className="text-sm font-semibold text-slate-950">
+            {trip.driverName} • {trip.truckUnit}
+          </div>
+          <div className="text-xs text-slate-500">{trip.id}</div>
+        </div>
+        <div className="text-sm text-slate-600">
+          {trip.origin} → {trip.destination}
+        </div>
+        <Chip label={`ETA ${trip.liveEta}`} />
+        <Chip label={`HOS ${trip.liveHosHours.toFixed(1)}h`} tone={trip.liveHosHours < 2 ? "danger" : trip.liveHosHours < 4 ? "warning" : "default"} />
+        <Chip label={`Trip ${health.label}`} tone={health.tone} strong />
+        <div className="text-sm font-medium text-slate-700">{action}</div>
+        <div className="flex items-center gap-2 justify-self-end">
+          <ChevronRight
+            className={cn(
+              "h-4 w-4 text-slate-400 transition",
+              expanded ? "rotate-90" : "",
+            )}
+          />
+        </div>
+      </button>
+      {expanded ? (
+        <div className="border-t border-slate-200 px-4 py-4">
+          <div className="flex flex-wrap gap-2">
+            <Chip label={`Route ${trip.routeHealth}`} tone={routeTone} />
+            <Chip label={`Fuel ${trip.fuelStatus}`} />
+            <Chip label={`Parking ${trip.parkingStopPlan}`} />
+            <Chip label={`Detention ${trip.detentionState}`} />
+            {trip.weatherIncidents.slice(0, 2).map((item) => (
+              <Chip key={item} label={`Weather: ${item}`} tone="warning" />
+            ))}
+          </div>
+          <div className="mt-3 grid gap-3 md:grid-cols-2">
+            <div className="rounded-2xl border border-slate-200 p-3 text-sm">
+              <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
+                AI reasoning
+              </div>
+              <p className="mt-1 text-slate-700">{trip.downstreamImpact}</p>
+              <p className="mt-2 text-xs text-slate-500">
+                Customer SLA: {trip.customerSlaRisk}
+              </p>
+            </div>
+            <div className="rounded-2xl border border-slate-200 p-3 text-sm">
+              <div className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
+                Alternate & permitted routes
+              </div>
+              <ul className="mt-1 space-y-1 text-slate-700">
+                {trip.routeOptionsSummary.slice(0, 3).map((item) => (
+                  <li key={item}>• {item}</li>
+                ))}
+              </ul>
+            </div>
+          </div>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button onClick={onOptimize} className="btn-primary">
+              Optimize route
+            </button>
+            <button onClick={onOpenDetail} className="btn-outline">
+              Full trip detail
+            </button>
+            <button onClick={onOpenDriver} className="btn-outline">
+              Message driver
+            </button>
+            <button onClick={onOpenLoad} className="btn-outline">
+              Reassign load
+            </button>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/* ---------- Chip ---------- */
+
+function Chip({
+  label,
+  tone = "default",
+  strong = false,
+}: {
+  label: string;
+  tone?: HealthTone | "default";
+  strong?: boolean;
+}) {
+  return (
+    <span
+      className={cn(
+        "rounded-full px-2.5 py-1 text-xs font-medium",
+        tone === "good"
+          ? "bg-emerald-50 text-emerald-700"
+          : tone === "warning"
+            ? "bg-amber-50 text-amber-700"
+            : tone === "danger"
+              ? "bg-rose-50 text-rose-700"
+              : "bg-slate-100 text-slate-700",
+        strong && "font-semibold",
+      )}
+    >
+      {label}
+    </span>
+  );
+}
+
+/* ---------- Driver list (compact) ---------- */
+
+function DriverList({
   drivers,
   onOpen,
 }: {
-  title: string;
   drivers: OperationsDriver[];
   onOpen: (driverId: string) => void;
 }) {
-  return (
-    <div className="rounded-[24px] border border-slate-200">
-      <div className="border-b border-slate-200 px-4 py-3">
-        <div className="text-lg font-semibold text-slate-950">{title}</div>
+  if (drivers.length === 0) {
+    return (
+      <div className="rounded-2xl border border-dashed border-slate-200 px-4 py-6 text-center text-sm text-slate-500">
+        No drivers in this view.
       </div>
-      <div className="divide-y divide-slate-200">
-        {drivers.map((driver) => (
-          <button
-            key={driver.id}
-            onClick={() => onOpen(driver.id)}
-            className="grid w-full gap-3 px-4 py-4 text-left transition hover:bg-slate-50 md:grid-cols-[minmax(0,1fr)_120px_120px_120px]"
-          >
-            <div>
-              <div className="text-base font-semibold text-slate-950">
-                {driver.firstName} {driver.lastName} • {driver.unit}
-              </div>
-              <div className="mt-1 text-sm text-slate-500">
-                {driver.currentRoute}
-              </div>
-              <div className="mt-2 text-xs text-slate-500">
-                {driver.downstreamImpact}
-              </div>
-            </div>
-            <DriverStat
-              label="Readiness"
-              value={`${driver.readinessScore}`}
+    );
+  }
+  return (
+    <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+      {drivers.map((driver) => (
+        <button
+          key={driver.id}
+          onClick={() => onOpen(driver.id)}
+          className="rounded-2xl border border-slate-200 p-3 text-left transition hover:border-blue-300 hover:bg-slate-50"
+        >
+          <div className="text-sm font-semibold text-slate-950">
+            {driver.firstName} {driver.lastName} • {driver.unit}
+          </div>
+          <div className="mt-0.5 text-xs text-slate-500">
+            {driver.currentCity}
+          </div>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            <Chip
+              label={`Ready ${driver.readinessScore}`}
               tone={
                 driver.readinessScore > 84
                   ? "good"
@@ -1546,86 +1609,83 @@ function DriverColumn({
                     : "warning"
               }
             />
-            <DriverStat
-              label="HOS left"
-              value={`${driver.hosRemainingHours.toFixed(1)}h`}
+            <Chip
+              label={`HOS ${driver.hosRemainingHours.toFixed(1)}h`}
+              tone={driver.hosRemainingHours < 2 ? "danger" : "default"}
             />
-            <DriverStat label="Deadhead" value={`${driver.deadheadMiles} mi`} />
-          </button>
-        ))}
-      </div>
+            <Chip label={`DH ${driver.deadheadMiles}mi`} />
+          </div>
+        </button>
+      ))}
     </div>
   );
 }
 
-function DriverStat({
-  label,
-  value,
-  tone = "default",
+/* ---------- Route optimizer (drawer body) ---------- */
+
+function RouteOptimizer({
+  choices,
+  onAssign,
 }: {
-  label: string;
-  value: string;
-  tone?: "default" | "good" | "warning" | "danger";
+  choices: RouteChoice[];
+  onAssign: () => void;
 }) {
   return (
-    <div className="rounded-2xl bg-slate-50 px-3 py-2">
-      <div className="text-xs text-slate-500">{label}</div>
-      <div
-        className={cn(
-          "mt-1 text-lg font-semibold",
-          tone === "good"
-            ? "text-emerald-700"
-            : tone === "warning"
-              ? "text-amber-700"
-              : tone === "danger"
-                ? "text-rose-700"
-                : "text-slate-950",
-        )}
-      >
-        {value}
-      </div>
+    <div className="space-y-3">
+      <p className="text-sm text-slate-500">
+        Cheapest, fastest, shortest, and recommended — with HOS-safe parking,
+        permitted routing, and fuel stops.
+      </p>
+      {choices.map((choice) => (
+        <article
+          key={choice.id}
+          className={cn(
+            "rounded-[22px] border p-4",
+            choice.label === "Recommended"
+              ? "border-blue-500 bg-blue-50/60"
+              : "border-slate-200",
+          )}
+        >
+          <div className="flex items-center justify-between">
+            <div className="text-lg font-semibold text-slate-950">
+              {choice.label}
+            </div>
+            {choice.label === "Recommended" ? (
+              <span className="rounded-full bg-blue-600 px-3 py-1 text-xs font-semibold text-white">
+                Best overall
+              </span>
+            ) : null}
+          </div>
+          <div className="mt-3 flex flex-wrap gap-1.5 text-xs">
+            <Chip label={`${choice.miles} mi`} />
+            <Chip label={`ETA ${choice.etaMinutes}m`} />
+            <Chip label={`Fuel $${choice.fuelCost}`} />
+            <Chip label={`Tolls $${choice.tolls}`} />
+            <Chip label={`HOS safe ${choice.leftoverHosHours.toFixed(1)}h`} tone={choice.leftoverHosHours < 2 ? "warning" : "good"} />
+            <Chip label={`Parking ${choice.parkingViability}%`} />
+            <Chip label={`Legality ${choice.legalityScore}`} tone="good" />
+            <Chip label={`Weather ${choice.weatherRisk}`} tone={choice.weatherRisk === "high" ? "danger" : choice.weatherRisk === "medium" ? "warning" : "default"} />
+            <Chip label={`Detention ${choice.detentionSensitivity}`} />
+            <Chip label={choice.permitted ? "Permitted" : "Check permits"} tone={choice.permitted ? "good" : "warning"} />
+          </div>
+          {choice.stateWarnings.length > 0 ? (
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {choice.stateWarnings.map((warning) => (
+                <Chip key={warning} label={warning} tone="warning" />
+              ))}
+            </div>
+          ) : null}
+          <p className="mt-3 text-sm text-slate-600">{choice.explanation}</p>
+        </article>
+      ))}
+      <button onClick={onAssign} className="btn-primary w-full justify-center">
+        Send to Map workflow
+      </button>
     </div>
   );
 }
 
-function TripMetric({
-  label,
-  value,
-  tone = "default",
-}: {
-  label: string;
-  value: string;
-  tone?: "default" | "good" | "warning" | "danger";
-}) {
-  return (
-    <div className="rounded-2xl bg-slate-50 px-3 py-2">
-      <div className="text-xs text-slate-500">{label}</div>
-      <div
-        className={cn(
-          "mt-1 text-sm font-semibold",
-          tone === "good"
-            ? "text-emerald-700"
-            : tone === "warning"
-              ? "text-amber-700"
-              : tone === "danger"
-                ? "text-rose-700"
-                : "text-slate-950",
-        )}
-      >
-        {value}
-      </div>
-    </div>
-  );
-}
-
-function RouteMetric({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-2xl bg-white px-3 py-2">
-      <div className="text-xs text-slate-500">{label}</div>
-      <div className="mt-1 text-sm font-semibold text-slate-950">{value}</div>
-    </div>
-  );
-}
+/* ---------- Shared small helpers ---------- */
 
 function InfoCard({
   label,
@@ -1836,7 +1896,13 @@ function LoadDetail({
   );
 }
 
-function TripDetail({ trip }: { trip: CurrentTrip }) {
+function TripDetail({
+  trip,
+  lastMile,
+}: {
+  trip: CurrentTrip;
+  lastMile?: DispatcherSnapshot["lastMileInsights"][number];
+}) {
   return (
     <div className="space-y-5">
       <div className="grid gap-3 sm:grid-cols-2">
@@ -1876,6 +1942,56 @@ function TripDetail({ trip }: { trip: CurrentTrip }) {
           ))}
         </div>
       </section>
+      {lastMile ? (
+        <section className="rounded-[24px] border border-slate-200 p-4">
+          <h3 className="text-lg font-semibold text-slate-950">
+            Last-mile navigation
+          </h3>
+          <p className="mt-1 text-xs text-slate-500">
+            Arrival guidance for {lastMile.facilityName}.
+          </p>
+          <div className="mt-3 rounded-2xl bg-slate-50 p-3 text-sm">
+            <div className="font-semibold text-slate-950">
+              {lastMile.recommendedEntrance}
+            </div>
+            <div className="mt-1 text-slate-600">
+              Parking / staging: {lastMile.parkingArea}
+            </div>
+            <p className="mt-2 text-slate-600">{lastMile.reasoning}</p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {lastMile.avoidNotes.map((note) => (
+                <span
+                  key={note}
+                  className="rounded-full bg-rose-50 px-3 py-1 text-xs text-rose-700"
+                >
+                  {note}
+                </span>
+              ))}
+              <span className="rounded-full bg-blue-50 px-3 py-1 text-xs text-blue-700">
+                Confidence {Math.round(lastMile.confidence * 100)}%
+              </span>
+            </div>
+            {lastMile.imageRefs.length > 0 ? (
+              <div className="mt-3 grid gap-2 md:grid-cols-2">
+                {lastMile.imageRefs.map((ref) => (
+                  <div
+                    key={ref}
+                    className="overflow-hidden rounded-[16px] border border-slate-200 bg-white"
+                  >
+                    <Image
+                      src={ref}
+                      alt={`${lastMile.facilityName} preview`}
+                      width={600}
+                      height={320}
+                      className="h-32 w-full object-cover"
+                    />
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        </section>
+      ) : null}
     </div>
   );
 }

@@ -8,7 +8,7 @@ export function TopHeader({ onOpenCmd }: { onOpenCmd?: () => void }) {
   const pathname = usePathname();
   const tabs = [
     { href: "/", label: "Map" },
-    { href: "/reports", label: "Reports" },
+    { href: "/reports", label: "Axle AI" },
   ];
   return (
     <header
