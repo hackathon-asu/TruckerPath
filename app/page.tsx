@@ -1,12 +1,13 @@
 "use client";
 import dynamic from "next/dynamic";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { cn } from "@/lib/cn";
 import { api } from "@/lib/client";
 import type { MapType } from "@/components/fleet-map";
 import type { RouteAlt } from "@/lib/route";
 import type { RoutePoi } from "@/lib/poi-along-route";
-import type { RoutingProfile, StopPoint } from "@/lib/types";
+import type { DispatchRecommendation, RoutingProfile, StopPoint } from "@/lib/types";
 import { IconRail } from "@/components/icon-rail";
 import { TopHeader } from "@/components/top-header";
 import { TripPlanner } from "@/components/trip-planner";
@@ -21,12 +22,34 @@ import { MapLayerPopover } from "@/components/map-layer-popover";
 import { RoutingProfileDialog } from "@/components/routing-profile-dialog";
 import { CommandPalette } from "@/components/command-palette";
 import { useToast } from "@/components/toast";
+import { createDemoDispatcherSnapshot } from "@/lib/reports-demo";
+import { readDemoOpsState, writeDemoOpsState } from "@/lib/reports-storage";
 
 const FleetMap = dynamic(() => import("@/components/fleet-map"), { ssr: false });
 
 type LeftTab = "search" | "drivers";
 
+const CITY_COORDINATES: Record<string, { latitude: number; longitude: number }> = {
+  "Dallas, TX": { latitude: 32.7767, longitude: -96.797 },
+  "Houston, TX": { latitude: 29.7604, longitude: -95.3698 },
+  "Fort Worth, TX": { latitude: 32.7555, longitude: -97.3308 },
+  "Austin, TX": { latitude: 30.2672, longitude: -97.7431 },
+  "Lubbock, TX": { latitude: 33.5779, longitude: -101.8552 },
+  "Abilene, TX": { latitude: 32.4487, longitude: -99.7331 },
+  "Kansas City, MO": { latitude: 39.0997, longitude: -94.5786 },
+  "St. Louis, MO": { latitude: 38.627, longitude: -90.1994 },
+};
+
 export default function HomePage() {
+  return (
+    <Suspense fallback={<div className="flex h-screen items-center justify-center bg-white text-sm text-ink-500">Loading map workspace…</div>}>
+      <HomePageContent />
+    </Suspense>
+  );
+}
+
+function HomePageContent() {
+  const searchParams = useSearchParams();
   const [tab, setTab] = useState<LeftTab>("search");
   const [stops, setStops] = useState<StopPoint[]>([]);
   const [routes, setRoutes] = useState<RouteAlt[]>([]);
@@ -42,7 +65,15 @@ export default function HomePage() {
   const [weather, setWeather] = useState(false);
   const [showDrivers, setShowDrivers] = useState(true);
   const [sending, setSending] = useState(false);
+  const [dispatchRecommendation, setDispatchRecommendation] = useState<DispatchRecommendation | null>(null);
+  const [dispatchLoading, setDispatchLoading] = useState(false);
   const { show, Toast } = useToast();
+  const dispatchLoadId = searchParams.get("dispatchLoad");
+  const suggestedDriver = searchParams.get("suggestedDriver");
+  const dispatchLoad = useMemo(
+    () => createDemoDispatcherSnapshot().loads.find((load) => load.id === dispatchLoadId) ?? null,
+    [dispatchLoadId],
+  );
 
   // Load routing profiles
   useEffect(() => {
@@ -77,6 +108,123 @@ export default function HomePage() {
     window.addEventListener("navpro:switch-tab", on);
     return () => window.removeEventListener("navpro:switch-tab", on);
   }, []);
+
+  useEffect(() => {
+    if (!dispatchLoad) return;
+    setTab("search");
+    if (stops.length >= 2 && stops[0]?.address_name === dispatchLoad.origin && stops[stops.length - 1]?.address_name === dispatchLoad.destination) {
+      return;
+    }
+    setStops([
+      {
+        id: `${dispatchLoad.id}-origin`,
+        latitude: 0,
+        longitude: 0,
+        address_name: dispatchLoad.origin,
+      },
+      {
+        id: `${dispatchLoad.id}-destination`,
+        latitude: 0,
+        longitude: 0,
+        address_name: dispatchLoad.destination,
+      },
+    ]);
+  }, [dispatchLoad, stops]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function geocodeDispatchStops() {
+      if (!dispatchLoad || stops.length < 2) return;
+      const needsGeocode = stops.some((stop) => stop.latitude === 0 && stop.longitude === 0);
+      if (!needsGeocode) return;
+      const fallbackOrigin = CITY_COORDINATES[dispatchLoad.origin];
+      const fallbackDestination = CITY_COORDINATES[dispatchLoad.destination];
+      try {
+        const [origin, destination] = await Promise.all([
+          api.geocode(dispatchLoad.origin),
+          api.geocode(dispatchLoad.destination),
+        ]);
+        if (cancelled) return;
+        setStops((current) => [
+          {
+            ...current[0],
+            latitude: origin.results[0]?.latitude ?? fallbackOrigin?.latitude ?? 32.7767,
+            longitude: origin.results[0]?.longitude ?? fallbackOrigin?.longitude ?? -96.797,
+          },
+          {
+            ...current[1],
+            latitude: destination.results[0]?.latitude ?? fallbackDestination?.latitude ?? 29.7604,
+            longitude: destination.results[0]?.longitude ?? fallbackDestination?.longitude ?? -95.3698,
+          },
+        ]);
+      } catch {
+        if (cancelled) return;
+        setStops((current) => [
+          {
+            ...current[0],
+            latitude: fallbackOrigin?.latitude ?? 32.7767,
+            longitude: fallbackOrigin?.longitude ?? -96.797,
+          },
+          {
+            ...current[1],
+            latitude: fallbackDestination?.latitude ?? 29.7604,
+            longitude: fallbackDestination?.longitude ?? -95.3698,
+          },
+        ]);
+      }
+    }
+    void geocodeDispatchStops();
+    return () => {
+      cancelled = true;
+    };
+  }, [dispatchLoad, stops]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function scoreDispatchDrivers() {
+      if (!dispatchLoadId || !activeRoute) {
+        setDispatchRecommendation(null);
+        return;
+      }
+      setDispatchLoading(true);
+      try {
+        const recommendation = await api.dispatchScore({
+          loadId: dispatchLoadId,
+          routeContext: {
+            miles: activeRoute.miles,
+            minutes: activeRoute.minutes,
+            tolls: activeRoute.tolls,
+            label: activeRoute.label,
+          },
+        });
+        if (!cancelled) setDispatchRecommendation(recommendation);
+      } catch {
+        if (!cancelled) setDispatchRecommendation(null);
+      } finally {
+        if (!cancelled) setDispatchLoading(false);
+      }
+    }
+    void scoreDispatchDrivers();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeRoute, dispatchLoadId]);
+
+  const assignDispatchDriver = useCallback((driverId: number) => {
+    if (!dispatchLoadId) return;
+    const state = readDemoOpsState();
+    state.assignments[dispatchLoadId] = { driverId: String(driverId), assignedAt: new Date().toISOString() };
+    writeDemoOpsState(state);
+    show(`Assigned driver ${driverId} to ${dispatchLoadId} in demo mode`);
+  }, [dispatchLoadId, show]);
+
+  const assignSuggestedDriver = useCallback(() => {
+    if (!dispatchLoadId || !suggestedDriver) return;
+    const state = readDemoOpsState();
+    state.assignments[dispatchLoadId] = { driverId: suggestedDriver, assignedAt: new Date().toISOString() };
+    writeDemoOpsState(state);
+    show(`Assigned ${suggestedDriver} to ${dispatchLoadId} in demo mode`);
+  }, [dispatchLoadId, show, suggestedDriver]);
 
   const sendRoute = useCallback(async () => {
     if (!profile || stops.length < 2) return;
@@ -188,6 +336,12 @@ export default function HomePage() {
               onOpenAddProfile={() => setProfileDialog(true)}
               onSendRoute={sendRoute}
               sending={sending}
+              dispatchLoadLabel={dispatchLoad ? `${dispatchLoad.id} • ${dispatchLoad.lane}` : undefined}
+              dispatchRecommendation={dispatchRecommendation}
+              dispatchLoading={dispatchLoading}
+              suggestedDriverLabel={suggestedDriver ?? undefined}
+              onAssignDispatchDriver={assignDispatchDriver}
+              onAssignSuggestedDispatchDriver={assignSuggestedDriver}
             />
           ) : (
             <DriversPanel />

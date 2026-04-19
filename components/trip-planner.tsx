@@ -21,7 +21,7 @@ import { api } from "@/lib/client";
 import { formatDuration, formatMiles } from "@/lib/format";
 import { useSavedRoutes } from "@/lib/saved-routes";
 import type { RouteAlt } from "@/lib/route";
-import type { RoutingProfile, StopPoint } from "@/lib/types";
+import type { DispatchRecommendation, RoutingProfile, StopPoint } from "@/lib/types";
 import { StopSearch } from "./stop-search";
 import { RoutingProfileCard } from "./routing-profile-card";
 
@@ -44,6 +44,12 @@ interface Props {
   onOpenAddProfile: () => void;
   onSendRoute: () => void;
   sending: boolean;
+  dispatchLoadLabel?: string;
+  dispatchRecommendation?: DispatchRecommendation | null;
+  dispatchLoading?: boolean;
+  suggestedDriverLabel?: string;
+  onAssignDispatchDriver?: (driverId: number) => void;
+  onAssignSuggestedDispatchDriver?: () => void;
 }
 
 export function TripPlanner({
@@ -65,6 +71,12 @@ export function TripPlanner({
   onOpenAddProfile,
   onSendRoute,
   sending,
+  dispatchLoadLabel,
+  dispatchRecommendation,
+  dispatchLoading,
+  suggestedDriverLabel,
+  onAssignDispatchDriver,
+  onAssignSuggestedDispatchDriver,
 }: Props) {
   const [tab, setTab] = useState<"recent" | "saved" | "shared">("recent");
   const { items: saved, save: saveRoute, remove } = useSavedRoutes();
@@ -73,7 +85,7 @@ export function TripPlanner({
     active?.advisories.find((notice) => notice.type !== "coverage") ?? active?.advisories[0] ?? null;
 
   useEffect(() => {
-    if (stops.length < 2) {
+    if (stops.length < 2 || stops.some((stop) => stop.latitude === 0 && stop.longitude === 0)) {
       setRoutes([]);
       setActiveRouteId(null);
       return;
@@ -173,6 +185,58 @@ export function TripPlanner({
             )}
           </div>
         )}
+
+        {dispatchLoadLabel ? (
+          <div className="card p-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-brand-500">Dispatch mode</div>
+                <div className="mt-1 text-sm font-semibold text-ink-900">{dispatchLoadLabel}</div>
+              </div>
+              {dispatchLoading ? <span className="text-xs text-ink-500">Ranking drivers…</span> : null}
+            </div>
+            <div className="mt-3 space-y-2">
+              {(dispatchRecommendation?.rankedDrivers ?? []).slice(0, 4).map((ranked, index) => (
+                <div key={ranked.driver.driverId} className={cn("rounded-lg border p-3", index === 0 ? "border-brand-300 bg-brand-50/50" : "border-ink-200")}>
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                        <div className="text-sm font-semibold text-ink-900">
+                          {ranked.driver.firstName} {ranked.driver.lastName}
+                        {suggestedDriverLabel ? <span className="ml-2 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">Dispatch candidate</span> : null}
+                      </div>
+                      <div className="mt-1 text-[11px] text-ink-500">{ranked.reasoning}</div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-lg font-semibold text-ink-900">{ranked.score}</div>
+                      <div className="text-[10px] text-ink-400">score</div>
+                    </div>
+                  </div>
+                  <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-ink-500">
+                    <span>{ranked.deadheadMiles} mi deadhead</span>
+                    <span>•</span>
+                    <span>{ranked.driver.hosDriveRemaining.toFixed(1)}h HOS</span>
+                    <span>•</span>
+                    <span>{ranked.tripFeasible ? "Feasible" : "Needs review"}</span>
+                  </div>
+                  {onAssignDispatchDriver ? (
+                    <button onClick={() => onAssignDispatchDriver(ranked.driver.driverId)} className="btn-primary mt-3 w-full">
+                      Assign this driver
+                    </button>
+                  ) : null}
+                </div>
+              ))}
+              {!dispatchLoading && (dispatchRecommendation?.rankedDrivers?.length ?? 0) === 0 && suggestedDriverLabel && onAssignSuggestedDispatchDriver ? (
+                <div className="rounded-lg border border-ink-200 p-3">
+                  <div className="text-sm font-semibold text-ink-900">Suggested dispatch handoff</div>
+                  <div className="mt-1 text-[11px] text-ink-500">{suggestedDriverLabel} was handed off from Reports. You can confirm the assignment here even if live ranking is still loading.</div>
+                  <button onClick={onAssignSuggestedDispatchDriver} className="btn-primary mt-3 w-full">
+                    Assign suggested driver
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
 
         {stops.length >= 2 && (
           <div className="card divide-y divide-ink-200 text-sm">

@@ -1,0 +1,11 @@
+<svg width="800" height="480" viewBox="0 0 800 480" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="800" height="480" fill="#F8FAFC"/>
+  <rect x="58" y="76" width="684" height="328" rx="24" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="4"/>
+  <rect x="120" y="124" width="250" height="198" rx="18" fill="#DBEAFE"/>
+  <rect x="408" y="124" width="260" height="198" rx="18" fill="#E2E8F0"/>
+  <path d="M52 350H670" stroke="#16A34A" stroke-width="16" stroke-linecap="round" stroke-dasharray="14 18"/>
+  <path d="M38 186H120" stroke="#2563EB" stroke-width="18" stroke-linecap="round"/>
+  <text x="154" y="206" fill="#1E3A8A" font-family="Arial" font-size="28" font-weight="700">South truck apron</text>
+  <text x="442" y="198" fill="#0F172A" font-family="Arial" font-size="28" font-weight="700">Office loop - avoid</text>
+  <text x="240" y="382" fill="#166534" font-family="Arial" font-size="28" font-weight="700">Dock-call staging line</text>
+</svg>

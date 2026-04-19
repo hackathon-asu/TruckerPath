@@ -237,6 +237,7 @@ export interface Load {
   origin: { lat: number; lng: number; name: string };
   destination: { lat: number; lng: number; name: string };
   commodity: string;
+  equipment?: string;
   weight: number; // lbs
   rate: number; // dollars
   miles: number;
@@ -245,6 +246,9 @@ export interface Load {
   shipper: string;
   receiver: string;
   status: LoadStatus;
+  urgency?: "low" | "medium" | "high" | "critical";
+  customer?: string;
+  docsRequired?: string[];
   assignedDriverId?: number;
   notes?: string;
 }
@@ -265,6 +269,25 @@ export interface DispatchDriver {
   readiness: "immediate" | "30min" | "1hr" | "unavailable";
   truckType: string;
   costPerMile: number;
+  truckUnit?: string;
+  vehicleId?: string;
+  equipmentCompatibility?: string[];
+  maintenanceScore?: number;
+  maintenanceRisk?: "low" | "medium" | "high";
+  csaScore?: number;
+  safetyScore?: number;
+  profitabilityScore?: number;
+  currentFuelPercent?: number;
+  mpgLoaded?: number;
+  mpgEmpty?: number;
+  tomorrowAvailableAt?: string;
+  downstreamDependencyIds?: string[];
+  eldProvider?: string;
+  eldErrorCode?: string | null;
+  idleSince?: string | null;
+  breakdownStatus?: "none" | "investigating" | "confirmed";
+  repairEtaHours?: number | null;
+  readinessExplanation?: string;
 }
 
 export interface ParkingStop {
@@ -326,6 +349,7 @@ export interface RankedDriver {
   hosAfterTrip: number; // remaining hours
   estimatedCost: number;
   reasoning: string;
+  components?: DriverReadinessBreakdown[];
 }
 
 export interface DispatchRecommendation {
@@ -334,6 +358,7 @@ export interface DispatchRecommendation {
   bestDriver: RankedDriver | null;
   confidenceScore: number; // 0-100
   explanation: string;
+  generatedAt?: string;
 }
 
 export type RiskLevel = "low" | "medium" | "high" | "critical";
@@ -385,4 +410,332 @@ export interface CostBreakdown {
   revenue: number;
   estimatedMargin: number;
   costPerMile: number;
+}
+
+export type DriverReadinessFactorKey =
+  | "deadhead"
+  | "hos"
+  | "trip_time"
+  | "equipment"
+  | "maintenance"
+  | "tomorrow_impact"
+  | "stranded_risk"
+  | "fuel_plan"
+  | "parking_viability";
+
+export interface DriverReadinessBreakdown {
+  key: DriverReadinessFactorKey;
+  label: string;
+  weight: number;
+  rawScore: number;
+  weightedScore: number;
+  explanation: string;
+}
+
+export type DashboardKpiKey =
+  | "trucks_on_road"
+  | "loads_today"
+  | "on_time_rate"
+  | "revenue_today"
+  | "cost_per_mile"
+  | "open_loads";
+
+export type DispatcherMode = "demo" | "live";
+
+export interface DashboardKpi {
+  key: DashboardKpiKey;
+  label: string;
+  value: string;
+  rawValue: number;
+  change: string;
+  tone: "neutral" | "positive" | "warning" | "critical";
+}
+
+export interface EntityRef {
+  type: "driver" | "load" | "trip" | "customer" | "vehicle" | "facility";
+  id: string;
+  label: string;
+}
+
+export interface DispatcherTask {
+  id: string;
+  category: "urgent" | "alerts" | "ai";
+  title: string;
+  whyItMatters: string;
+  severity: "urgent" | "attention" | "healthy";
+  effortMinutes: number;
+  confidence?: number;
+  tags: string[];
+  related: EntityRef[];
+  primaryCta: string;
+  primaryAction:
+    | "assign"
+    | "message"
+    | "reroute"
+    | "review"
+    | "resolve"
+    | "open_driver"
+    | "open_load"
+    | "open_trip"
+    | "open_docs";
+  operationalReasons: string[];
+  status: "open" | "snoozed" | "dismissed" | "completed";
+}
+
+export interface OperationalAlert {
+  id: string;
+  scope: "dispatcher" | "driver";
+  type:
+    | "reroute"
+    | "delay"
+    | "detention"
+    | "weather"
+    | "road_closure"
+    | "law_change"
+    | "market_surge"
+    | "downstream_impact"
+    | "idle_stop"
+    | "breakdown"
+    | "eld_sync"
+    | "doc_missing";
+  severity: "info" | "warning" | "critical";
+  title: string;
+  description: string;
+  related: EntityRef[];
+  actionLabel: string;
+  draftMessage?: string;
+  status: "new" | "acknowledged" | "snoozed";
+  effectiveDate?: string;
+  sourceUrl?: string;
+}
+
+export interface RouteChoice {
+  id: string;
+  label: "Cheapest" | "Fastest" | "Shortest" | "Recommended";
+  miles: number;
+  etaMinutes: number;
+  fuelCost: number;
+  tolls: number;
+  fuelPartnerSavings: number;
+  leftoverHosHours: number;
+  parkingViability: number;
+  legalityScore: number;
+  weatherRisk: "low" | "medium" | "high";
+  closureRisk: "low" | "medium" | "high";
+  detentionSensitivity: "low" | "medium" | "high";
+  lastMileConfidence: number;
+  permitted: boolean;
+  stateWarnings: string[];
+  explanation: string;
+}
+
+export interface DriverProfileStat {
+  label: string;
+  value: string;
+  tone?: "default" | "good" | "warning" | "danger";
+}
+
+export interface DriverInsight {
+  summary: string;
+  recommendations: string[];
+  readyForOtrNow: boolean;
+  readyExplanation: string;
+}
+
+export interface OperationsDriverProfile {
+  bio: string;
+  phone: string;
+  email: string;
+  historicalTrips: string[];
+  incidents: string[];
+  hosTrend: string;
+  fuelEfficiency: string;
+  averageTripDuration: string;
+  averageMargin: string;
+  safetyStats: string[];
+  inspections: string[];
+  violations: string[];
+  overview: DriverInsight;
+  futureCommitments: string[];
+}
+
+export interface OperationsDriver {
+  id: string;
+  firstName: string;
+  lastName: string;
+  unit: string;
+  truckType: string;
+  terminal: string;
+  status: "active" | "available" | "detained" | "maintenance" | "breakdown";
+  currentCity: string;
+  currentLat: number;
+  currentLng: number;
+  currentRoute: string;
+  currentLoadId?: string;
+  currentTripId?: string;
+  hosRemainingHours: number;
+  deadheadMiles: number;
+  readinessScore: number;
+  maintenanceScore: number;
+  csaScore: number;
+  profitabilityScore: number;
+  currentFuelPercent: number;
+  mpgLoaded: number;
+  mpgEmpty: number;
+  maintenanceRisk: "low" | "medium" | "high";
+  downstreamImpact: string;
+  eldProvider: string;
+  eldErrorCode?: string;
+  idleSince?: string;
+  breakdownStatus: "none" | "investigating" | "confirmed";
+  repairEtaHours?: number;
+  readinessBreakdown: DriverReadinessBreakdown[];
+  profile: OperationsDriverProfile;
+}
+
+export interface OperationsVehicle {
+  id: string;
+  unit: string;
+  equipment: string;
+  status: "active" | "available" | "maintenance" | "breakdown";
+  assignedDriverId?: string;
+  currentFuelPercent: number;
+  maintenanceScore: number;
+  mpgLoaded: number;
+  mpgEmpty: number;
+}
+
+export interface TripTimelineEvent {
+  id: string;
+  label: string;
+  timestamp: string;
+  tone: "default" | "warning" | "danger" | "good";
+}
+
+export interface CurrentTrip {
+  id: string;
+  driverId: string;
+  driverName: string;
+  truckUnit: string;
+  loadId: string;
+  origin: string;
+  destination: string;
+  liveHosHours: number;
+  liveEta: string;
+  routeHealth: "healthy" | "watch" | "risk";
+  fuelStatus: string;
+  parkingStopPlan: string;
+  detentionState: string;
+  alertCount: number;
+  routeOptionsSummary: string[];
+  timeline: TripTimelineEvent[];
+  weatherIncidents: string[];
+  detentionClockMinutes: number;
+  customerSlaRisk: string;
+  downstreamImpact: string;
+  nudgesSent: string[];
+  lastMilePlan: string;
+  routeChoices: RouteChoice[];
+}
+
+export interface LoadBoardRecord {
+  id: string;
+  lane: string;
+  origin: string;
+  destination: string;
+  pickupWindow: string;
+  deliveryWindow: string;
+  equipment: string;
+  miles: number;
+  rate: number;
+  assignedDriverId?: string;
+  urgency: "low" | "medium" | "high" | "critical";
+  bestMatchDriverId?: string;
+  bestMatchDriverName?: string;
+  marginProjection: number;
+  docsRequired: string[];
+  detentionTerms: string;
+  aiAssignmentRecommendation: string;
+  customer: string;
+  routeChoices: RouteChoice[];
+}
+
+export interface LastMileInsight {
+  facilityId: string;
+  facilityName: string;
+  recommendedEntrance: string;
+  parkingArea: string;
+  avoidNotes: string[];
+  confidence: number;
+  reasoning: string;
+  imageRefs: string[];
+}
+
+export interface DetentionCase {
+  id: string;
+  loadId: string;
+  tripId: string;
+  facility: string;
+  minutes: number;
+  clockState: string;
+  invoiceDraftReady: boolean;
+  aiAlternatives: string[];
+  tomorrowImpact: string;
+  marginImpact: string;
+}
+
+export interface CostTrendPoint {
+  label: string;
+  revenue: number;
+  margin: number;
+  costPerMile: number;
+}
+
+export interface SafetyCase {
+  id: string;
+  title: string;
+  status: string;
+  owner: string;
+  dueText: string;
+}
+
+export interface DocumentBillingCase {
+  id: string;
+  loadId: string;
+  driverName: string;
+  customer: string;
+  missingDocs: string[];
+  reconciliationStatus: "blocked" | "review" | "approved";
+  invoiceMatchConfidence: number;
+  aiExplanation: string;
+}
+
+export interface RepairShopOption {
+  id: string;
+  name: string;
+  city: string;
+  distanceMiles: number;
+  capability: string;
+}
+
+export interface DispatcherSnapshot {
+  mode: DispatcherMode;
+  modeNotice: string | null;
+  greeting: string;
+  fleetHeadline: string;
+  lastRefresh: string;
+  kpis: DashboardKpi[];
+  urgentBand: OperationalAlert[];
+  tasks: DispatcherTask[];
+  drivers: OperationsDriver[];
+  vehicles: OperationsVehicle[];
+  trips: CurrentTrip[];
+  loads: LoadBoardRecord[];
+  alerts: OperationalAlert[];
+  detentions: DetentionCase[];
+  lastMileInsights: LastMileInsight[];
+  documentCases: DocumentBillingCase[];
+  safetyCases: SafetyCase[];
+  repairShops: RepairShopOption[];
+  costTrend: CostTrendPoint[];
 }

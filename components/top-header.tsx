@@ -1,14 +1,13 @@
 "use client";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Bell, Grid3X3, Search, Sparkles, Truck } from "lucide-react";
+import { Bell, Grid3X3, Search, Truck } from "lucide-react";
 import { cn } from "@/lib/cn";
 
 export function TopHeader({ onOpenCmd }: { onOpenCmd?: () => void }) {
   const pathname = usePathname();
   const tabs = [
     { href: "/", label: "Map" },
-    { href: "/copilot", label: "CoPilot", icon: Sparkles },
     { href: "/reports", label: "Reports" },
   ];
   return (

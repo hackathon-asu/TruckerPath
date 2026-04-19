@@ -1,5 +1,6 @@
 import type { Driver, RoutingProfile, Terminal, Vehicle } from "./types";
 import type { DispatchRecommendation, ParkingRiskResult, DetentionImpactResult, CopilotAlert } from "./types";
+import type { DispatcherSnapshot } from "./types";
 import type { RouteAlt } from "./route";
 
 async function jsonFetch<T>(url: string, init?: RequestInit): Promise<T> {
@@ -57,10 +58,10 @@ export const api = {
     ),
 
   // ── Dispatcher CoPilot APIs ──
-  dispatchScore: (loadId: string) =>
+  dispatchScore: (params: string | { loadId: string; routeContext?: { miles: number; minutes: number; tolls: number; label?: string } }) =>
     jsonFetch<DispatchRecommendation>("/api/dispatch-score", {
       method: "POST",
-      body: JSON.stringify({ loadId }),
+      body: JSON.stringify(typeof params === "string" ? { loadId: params } : params),
     }),
   parkingRisk: (params: { loadId: string; hosRemaining?: number; delayMinutes?: number }) =>
     jsonFetch<ParkingRiskResult>("/api/parking-risk", {
@@ -80,4 +81,5 @@ export const api = {
     if (params?.mode) qs.set("mode", params.mode);
     return jsonFetch<unknown>(`/api/eld-summary?${qs.toString()}`);
   },
+  dispatcherSnapshot: () => jsonFetch<DispatcherSnapshot>("/api/dispatcher-hq"),
 };

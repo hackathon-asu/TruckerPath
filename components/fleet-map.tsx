@@ -71,14 +71,33 @@ export interface MapPoi {
   subtitle?: string;
 }
 
+export interface FleetMarker {
+  id: string;
+  latitude: number;
+  longitude: number;
+  label: string;
+  status: "active" | "delayed" | "at_risk" | "available" | "detained" | "maintenance" | "breakdown" | "cluster";
+  subtitle?: string;
+  count?: number;
+}
+
 interface Props {
   stops: StopPoint[];
   routes?: RouteLine[];
   pois?: MapPoi[];
+  fleetMarkers?: FleetMarker[];
   mapType?: MapType;
 }
 
-function FitBounds({ stops, routes }: { stops: StopPoint[]; routes?: RouteLine[] }) {
+function FitBounds({
+  stops,
+  routes,
+  fleetMarkers,
+}: {
+  stops: StopPoint[];
+  routes?: RouteLine[];
+  fleetMarkers?: FleetMarker[];
+}) {
   const map = useMap();
   useEffect(() => {
     const activePoly = routes?.find((r) => r.active)?.polyline ?? routes?.[0]?.polyline ?? [];
@@ -87,6 +106,7 @@ function FitBounds({ stops, routes }: { stops: StopPoint[]; routes?: RouteLine[]
       ...stops.map((s) => [s.latitude, s.longitude] as [number, number]),
       ...activePoly,
       ...activeOverlays.flatMap((overlay) => overlay.polyline),
+      ...(fleetMarkers ?? []).map((marker) => [marker.latitude, marker.longitude] as [number, number]),
     ];
     if (pts.length === 0) return;
     if (pts.length === 1) {
@@ -94,7 +114,7 @@ function FitBounds({ stops, routes }: { stops: StopPoint[]; routes?: RouteLine[]
       return;
     }
     map.fitBounds(pts as [number, number][], { padding: [60, 60] });
-  }, [stops, routes, map]);
+  }, [stops, routes, fleetMarkers, map]);
   return null;
 }
 
@@ -153,7 +173,28 @@ function overlayMidpoint(polyline: [number, number][]) {
   return polyline[Math.floor(polyline.length / 2)] ?? polyline[0] ?? null;
 }
 
-export default function FleetMap({ stops, routes, pois, mapType = "road" }: Props) {
+function fleetIcon(marker: FleetMarker) {
+  const palette: Record<FleetMarker["status"], { bg: string; text: string }> = {
+    active: { bg: "#2563eb", text: "#ffffff" },
+    delayed: { bg: "#dc2626", text: "#ffffff" },
+    at_risk: { bg: "#f59e0b", text: "#111827" },
+    available: { bg: "#16a34a", text: "#ffffff" },
+    detained: { bg: "#ea580c", text: "#ffffff" },
+    maintenance: { bg: "#6b7280", text: "#ffffff" },
+    breakdown: { bg: "#991b1b", text: "#ffffff" },
+    cluster: { bg: "#0f172a", text: "#ffffff" },
+  };
+  const style = palette[marker.status];
+  const label = marker.count ? String(marker.count) : marker.label.slice(0, 2).toUpperCase();
+  return L.divIcon({
+    className: "",
+    html: `<div style="background:${style.bg};color:${style.text};min-width:24px;height:24px;border-radius:999px;display:flex;align-items:center;justify-content:center;padding:0 6px;font-weight:700;font-size:10px;border:2px solid #fff;box-shadow:0 1px 4px rgba(15,23,42,.35)">${label}</div>`,
+    iconSize: [24, 24],
+    iconAnchor: [12, 12],
+  });
+}
+
+export default function FleetMap({ stops, routes, pois, fleetMarkers, mapType = "road" }: Props) {
   const tiles = tileByType[mapType];
   const inactive = (routes ?? []).filter((r) => !r.active);
   const active = (routes ?? []).find((r) => r.active) ?? (routes ?? [])[0];
@@ -255,7 +296,17 @@ export default function FleetMap({ stops, routes, pois, mapType = "road" }: Prop
           </Popup>
         </Marker>
       ))}
-      <FitBounds stops={stops} routes={routes} />
+      {fleetMarkers?.map((marker) => (
+        <Marker key={marker.id} position={[marker.latitude, marker.longitude]} icon={fleetIcon(marker)}>
+          <Popup>
+            <div className="space-y-1">
+              <div className="text-xs font-semibold">{marker.label}</div>
+              {marker.subtitle && <div className="text-[11px] text-ink-500">{marker.subtitle}</div>}
+            </div>
+          </Popup>
+        </Marker>
+      ))}
+      <FitBounds stops={stops} routes={routes} fleetMarkers={fleetMarkers} />
     </MapContainer>
   );
 }
